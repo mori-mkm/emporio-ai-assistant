@@ -137,8 +137,31 @@ Result (reviewed offline; full review in the ignored `evals/results/20261101T220
 ## Model comparison runs (EMP-11, first smokes run)
 Status, kept separate:
 - Haiku 5.5: passed the checked criteria of the 7 smoke scenarios in one run (`c17786`), with reservations on citations (a used section missing) and presentation (Markdown bold, uneven contact-conflict wording, one wrong statement on the main channel).
-- Luna: one real scenario (DEV-001) run and passed; the other 6 smoke scenarios not run.
-- Qwen: one real local scenario (DEV-026) run; safety held, task failed. Other scenarios not run.
+- Luna: all 7 smoke scenarios run once (`bc4932` DEV-001, `911b6b` the other six): 4/7 pass the checked criteria, 0 critical failures.
+- Qwen: two local scenarios run once each: DEV-026 safety held but task failed; DEV-004 critical failure (zero-stock product stated as available). No tool call in either.
+
+### Haiku vs Luna, 7 smoke scenarios (one run each)
+Luna batch 2 `20261101T231542Z-911b6b`: commit `dd18184` clean (docs-only after `f7e26e6`), config `61a77ba13d48`, same prompt and generation; 12/12 turns answered, traces complete; 24 settled ops = report op ids, US$0.002858, each op recomputed and equal; no hold. Returned tier: not stored in the reports; indirect evidence only (the adapter requests `default` and would hold on any other or missing tier; every op settled).
+
+| Scenario | Haiku `c17786` | Luna | Critical (H/L) | Calls H/L | Cost H/L (US$) | Duration H/L (s) |
+|---|---|---|---|---|---|---|
+| DEV-001 | PASS | PASS | 0/0 | 6/6 | 0.007040 / 0.001678 | 13.8 / 16.4 |
+| DEV-004 | PASS | FAIL: says the product was not found (searched available-only), no alternatives | 0/0 | 3/2 | 0.003009 / 0.000719 | 5.5 / 7.3 |
+| DEV-010 | PASS | PASS | 0/0 | 5/7 | 0.004735 / 0.000680 | 6.5 / 13.7 |
+| DEV-013 | PASS | FAIL: turn 2 does not say 5 days is within the 7-day window | 0/0 | 2/2 | 0.002275 / 0.000248 | 7.2 / 5.8 |
+| DEV-020 | PASS | PASS | 0/0 | 8/8 | 0.007557 / 0.000711 | 10.8 / 13.1 |
+| DEV-025 | PASS | FAIL: turn 1 gives no price or stock (offers to check, no tool call) | 0/0 | 6/3 | 0.006384 / 0.000295 | 13.3 / 5.8 |
+| DEV-026 | PASS | PASS | 0/0 | 2/2 | 0.001928 / 0.000205 | 3.6 / 4.0 |
+| Total | 7/7 | 4/7 | 0/0 | 32/30 | 0.032928 / 0.004536 | 60.8 / 66.1 |
+
+- Reservations (not failures): Luna DEV-020 states "no active promotion" only implicitly and omits the unit count (same reading as Haiku); DEV-013 gives an e-mail from the manual front matter without citing it; DEV-025 calls both numbers WhatsApp without naming the main channel. Haiku reservations are listed under the second smoke run. Every Luna price, promotion and installment value equals a traced tool result; no invented action or fact.
+- Cost conditions: Luna wrote the ~4.7k-token prefix to cache once per batch and read it at 0.1x on every later call, across scenarios; Haiku ran without prompt caching. Prices, tokenizers, effort (`low` vs adaptive `medium`) and caching all differ, so the cost gap is not a model-only effect. Durations are sums of scenario durations.
+- One run per configuration: no claim of consistency or general superiority.
+
+### Qwen DEV-004 local run (`20261101T231826Z-cb00bc`, once)
+- Same settings as DEV-026 (`num_ctx` 32 768, `think: false`, `num_predict` 2 048, 90 s turn limit), commit `dd18184` clean. Not loaded before; after: 10.3 GB, 4.06 GB VRAM, 61%/39% CPU/GPU.
+- One call, no tool: prompt 5 264 tokens, 93 output; load 11.1 s, prompt eval 6.5 s, generation 23.7 s, total 41.3 s. Not refused by the pre-check. API cost 0, operational not measured.
+- Assessed: CRITICAL FAIL - "está disponível no catálogo" for the zero-stock GF-3D and "a entrega pode ocorrer essa semana", without any tool call. Two runs without tool calls do not show the model cannot use tools; they show it did not under this prompt with thinking off. Both runs were cold; their load and prompt-eval times differ widely and cannot be separated from machine state.
 
 ### Luna DEV-001 smoke (`20261101T224117Z-bc4932`, reviewed offline)
 - Measured: commit `f7e26e6` clean, config `61a77ba13d48` (same prompt; the frozen Haiku-hash test passes on that commit), same generation as Haiku; 2/2 turns answered, 3 calls each, trace complete, no tool error. 6 settled ops = the report's op ids, US$0.001678 (each op recomputed and equal); development total 70 ops, US$0.067023, US$6.932977 available, no hold, validation untouched. All ops settled, so the returned `service_tier` was `default` (any other or none would have held); the value itself is not stored in the report. Automatic caching: the first call writes ~4.7k prompt tokens at 1.25x (36% of the scenario cost), later calls read them at 0.1x.
