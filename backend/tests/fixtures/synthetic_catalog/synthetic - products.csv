@@ -1,0 +1,5 @@
+product_id,price_brl,name,category_id,description,stock_quantity,status,specs,created_at
+1001,1234.5,Test Guitar A,1,"Synthetic product, available",3,active,"{""body"":""test"",""strings"":""6""}",2024-01-02
+1002,999,Test Guitar B,1,Synthetic product out of stock,0,active,{},2024-02-03
+1003,19567,Test Keyboard Old,2,Synthetic discontinued product,2,discontinued,"{""keys"":""61""}",2023-05-06
+1004,159.9,Test Keyboard New,2,Synthetic upcoming product,4,coming_soon,"{""keys"":""88""}",2025-07-08

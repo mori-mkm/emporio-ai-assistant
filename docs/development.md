@@ -21,6 +21,7 @@ Layout (EMP-4): `backend/` (FastAPI package `emporio_assistant`, pytest, Ruff, p
 - Offline checks: `.\.venv\Scripts\python.exe scripts/verify.py --mode app` (runs the harness tests, Ruff and pytest with the same venv interpreter, then npm lint/typecheck/build). Run it with the venv Python, not the global one, or backend checks fail on missing packages. Set `$env:PYTHONDONTWRITEBYTECODE='1'` to avoid bytecode.
 - Harness only: `python scripts/verify.py --mode harness`.
 The verifier FAILS if the app is not scaffolded. Browser/live smoke checks are separate and explicitly reported. A build alone is not an end-to-end test. Don't create empty scripts to fake success.
+- Data (EMP-5): `.\.venv\Scripts\python.exe -m emporio_assistant.prepare_data --csv-dir "<challenge>\data" --manual "<challenge>\data\políticas_da_loja.pdf" --output-dir data\derived` (also `emporio-prepare-data`). Outputs and rules in `docs/data.md`. `data/derived/` and `.local/` are git-ignored; tests use `backend/tests/fixtures/synthetic_catalog/` and never the challenge files.
 - Dev servers: API on `127.0.0.1:8000`, UI on `127.0.0.1:5173`; Vite proxies `/api` to the API (target in `frontend/vite.config.ts`), so the backend has no CORS middleware.
 
 ## Before marking ready for owner review

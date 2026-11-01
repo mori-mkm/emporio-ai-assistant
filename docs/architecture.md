@@ -1,6 +1,6 @@
 # Architecture baseline and decision register
 
-Status: approved direction, application NOT implemented. Original assignment wins over a mistaken paraphrase here; document mismatches.
+Status: approved direction. Implemented so far: health API + status page (EMP-4) and offline data preparation (EMP-5, see `docs/data.md`); no agent yet. Original assignment wins over a mistaken paraphrase here; document mismatches.
 
 ## Product and boundaries
 Empório da Música support assistant. Reduce repetitive inquiries while keeping stock, price and policy answers accurate. Store tone: welcoming, informal, professional and knowledgeable, without pressure or invented claims.
@@ -20,7 +20,7 @@ Single Python agent → allowlisted tools → read-only catalog. FastAPI is the 
 2. Policy access: full context vs BM25 vs semantic retrieval. Hybrid/reranker only if complementary failures justify it.
 3. Initial embedding candidate: text-embedding-3-small; validate its retrieval, don't assume it wins.
 4. Streaming implementation/SDK after minimal API/UI works.
-5. History persistence beyond a session only if useful. Session isolation is mandatory regardless.
+5. v1 history is temporary, backend-held, isolated per session, with expiry and limits (settled). Persistence beyond a session only if useful. Session isolation is mandatory regardless.
 6. Supabase, managed deployment, authentication, private-order access and WhatsApp are optional evolutions outside critical path. No implicit purchases.
 7. LangGraph only after a concrete control-flow need; no framework to match keywords alone.
 

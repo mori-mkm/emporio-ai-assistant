@@ -4,14 +4,15 @@ Customer-support assistant for **Empório da Música**, a fictional music store,
 
 ## Current state
 
-**Work in progress.** The assistant itself is not implemented yet. Nothing in this version answers questions, calls a language model, or reads the store data.
+**Work in progress.** The assistant itself is not implemented yet. Nothing in this version answers questions or calls a language model.
 
-What works today (EMP-4, project scaffold):
+What works today:
 - FastAPI backend with one public endpoint, `GET /api/health`, returning `{"status": "ok", "service": "emporio-ai-assistant"}`. It needs no `.env`, credentials, database or model provider.
 - React + TypeScript (Vite) page with the store identity, a notice that support is still being prepared, and a live check of the API connection (checking / available / failed states, with a retry button).
-- Offline checks: Ruff and pytest for the backend; lint, typecheck and build for the frontend.
+- Data preparation (EMP-5): a command that validates the challenge catalog CSVs (categories, products, promotions), builds a local SQLite catalog, and extracts the store manual by page and section with source hashes. Customers and orders are not loaded. See [docs/data.md](docs/data.md).
+- Offline checks: Ruff and pytest for the backend (synthetic fixtures, no challenge data needed); lint, typecheck and build for the frontend.
 
-Planned next (not available yet): catalog data loading, read-only product/policy tools, the single-agent chat with Claude Haiku as the first model, evaluation and budget controls. See `docs/plan.md`.
+Planned next (not available yet): read-only product/policy tools, the single-agent chat with Claude Haiku as the first model, evaluation and budget controls. See `docs/plan.md`.
 
 ## Prerequisites
 
@@ -34,6 +35,22 @@ Set-Location ..
 ```
 
 `backend/pyproject.toml` declares the direct dependencies; `backend/constraints.txt` pins the full tested set. `frontend/package-lock.json` pins the frontend.
+
+## Prepare the challenge data
+
+The challenge sources are not in this repository. Point the command at your local copy of the extracted challenge folder (quotes matter: the folder name has spaces and accents):
+
+```powershell
+$src = 'C:\path\to\Desafio Técnico AI Engineer 2026'
+.\.venv\Scripts\python.exe -m emporio_assistant.prepare_data `
+    --csv-dir "$src\data" `
+    --manual "$src\data\políticas_da_loja.pdf" `
+    --output-dir data\derived
+```
+
+It writes `catalog.sqlite`, `policies.json` and `quality_report.json` to `data\derived` (git-ignored) and prints counts and warnings. Exit code 1 means validation failed and previous files were kept. Schema, money representation, data snapshot and the ambiguities found in the sources are in [docs/data.md](docs/data.md). The API does not use these files yet.
+
+Tests use small synthetic fixtures (`backend/tests/fixtures/synthetic_catalog/`), not the store's data.
 
 ## Run (two terminals)
 
@@ -79,9 +96,11 @@ Set-Location frontend; npm run lint; npm run typecheck; npm run build; Set-Locat
 
 ## Limits of this stage
 
-- No chat, model provider, retrieval, catalog data, SQLite, orders or customer data.
+- No chat, model provider, retrieval, business tools or catalog API. The prepared catalog and manual are not served or used yet.
+- No customer or order data: those challenge tables are deliberately not loaded in v1.
+- The catalog is a static snapshot of the challenge files, not live inventory. Source ambiguities are documented in `docs/data.md`, not resolved.
 - No authentication, deployment or production server configuration; the Vite proxy is for local development only.
-- No automated browser tests yet; the browser check for EMP-4 was a manual headless render (see `docs/progress.md`).
+- No automated browser tests in the repository; the EMP-4 UI checks were run locally with headless Edge (see `docs/progress.md`).
 
 ## AI assistance
 

@@ -1,0 +1,4 @@
+promotion_id,product_id,discount_percent,description,is_active
+1,1001,15,Test Campaign,1
+2,1001,12.5,Test Campaign Old,0
+3,1003,10,Test Campaign,0

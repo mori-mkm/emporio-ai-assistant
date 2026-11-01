@@ -1,10 +1,21 @@
 # Session handoff
 
-## Current state (2026-11-01, after EMP-4 work — awaiting Matheus review)
-- Git: `main` tracking `origin/main` (commits `269dd3a`, `f057769`); EMP-4 changes uncommitted, Matheus stages/commits.
-- App scaffold exists: FastAPI `GET /api/health` + Vite React-TS status page. No chat, model, data, SQLite or budget code yet.
-- Linear: no Linear connector in the Claude session; EMP-4 criteria taken from the owner prompt + `docs/plan.md`. Linear updates for EMP-3/EMP-4 proposed to Matheus, not applied.
+## Current state (2026-11-01, EMP-5 ready for Matheus review)
+- Git: `main` at `8ea79af` (EMP-4 committed). EMP-5 changes uncommitted; Matheus stages/commits.
+- Linear (per owner review): EMP-3 done, EMP-4 in review, EMP-5 current. No Linear connector in the Claude session: updates are proposed, not applied.
+- Implemented: health API + status page (EMP-4); offline data preparation (EMP-5). No agent, tools, catalog API, budget control or model code yet.
 - Live calls / spend: none. Claude Code billing mode still unconfirmed (required before any paid test).
+
+## 2026-11-01 — EMP-5 validated catalog, SQLite and sourced policies
+- EMP-4 leftovers: interactive check with real input events (`.local/cdp-retry-check.mjs`, local and ignored: headless Edge driven via DevTools Protocol with Node's built-in WebSocket; it starts and stops its own Vite/uvicorn/Edge). Results: API down on load → failure text; Tab focuses "Tentar novamente" with `:focus-visible` and a solid 3px outline; Enter → available; mouse click with API down → failure; Space → available. No leftover processes. Not covered: screen readers, light theme. `main.py` comment corrected (CORS limits browser reads, not requests; not auth).
+- Code: `backend/emporio_assistant/catalog.py` (CSV validation, SQLite build with temp file + checks + `os.replace`), `policies.py` (pypdf layout extraction, sections from the PDF outline), `prepare_data.py` (CLI + `emporio-prepare-data` entry point). Health endpoint untouched; it never opens the DB.
+- Dependency: `pypdf==6.21.4` (pure Python, BSD-3) added to `pyproject.toml`; `constraints.txt` gained only that line (verified equal to `pip freeze --exclude-editable`). No other version changes.
+- Extraction finding: pypdf default mode yields one word per line and flattened tables on this PDF; layout mode was verified page by page and is used.
+- Real run (`--csv-dir "Desafio Técnico AI Engineer 2026\data" --manual "...\políticas_da_loja.pdf" --output-dir data\derived`): exit 0; categories 9, products 65, promotions 25 (4 active), manual 8 pages / 29 sections; 0 errors, 9 warnings (product 96 active with 0 stock; 136 discontinued with 13; 130 coming_soon with 2; categories 6/7/8 unused; products 93/96/99 with two inactive promotion rows). Second run through the entry point: identical catalog content and identical `policies.json`.
+- Checks: `ruff format --check` and `ruff check` clean; `pytest` 29 passed (synthetic fixtures + generated PDF, temp dirs); `verify.py --mode app` with `.venv` Python and `PYTHONDONTWRITEBYTECODE=1` → HARNESS PASS + APP OFFLINE CHECKS PASS; `git check-ignore -v` confirms `data/derived/*` and `.local/*` ignored.
+- Docs: `docs/data.md` (command, schema, money, snapshot, source evidence/ambiguities), README, development, plan (reconciled with owner decisions), architecture status line.
+- Harness: the guard blocked a Write to the session scratchpad (outside the project root); the browser script was placed in the ignored `.local/` instead. No protected file changed.
+- Open: owner decisions on contacts divergence, installment rule precedence, discontinued-with-stock and coming_soon handling (EMP-8); distribution of the original data and of the extracted manual; `StarletteDeprecationWarning` (httpx) remains.
 
 ## 2026-11-01 — EMP-4 monorepo scaffold (Python/FastAPI + React/TypeScript)
 - Intent: reproducible local backend + frontend, health check visible in the UI, offline checks wired into `verify.py --mode app`.
@@ -71,7 +82,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews EMP-4 (manual two-terminal run in README), commits it, and updates Linear. Suggested next card: EMP-5 (validated data, SQLite catalog, sourced policies), after deciding the data distribution policy.
+Matheus reviews EMP-5 and commits it; EMP-4 can close (its UI leftovers now have interactive evidence). Suggested next card: EMP-6 (30 development scenarios from the prepared data and `docs/data.md` evidence; owner keeps the 10 reserved cases outside the repo), then EMP-7 (minimal budget control) before any paid call.
 
 ## Update template
 - Date / EMP issue:

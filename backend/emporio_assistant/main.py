@@ -1,8 +1,9 @@
 """FastAPI application entry point.
 
 No CORS middleware: in development the Vite server proxies `/api` to this
-process, so the browser only talks to one origin. Cross-origin requests from
-any other site get no CORS headers and are blocked by the browser.
+process, so the UI and API share one origin. Without CORS headers, browsers
+won't let scripts on other sites read responses, but requests can still reach
+the server. CORS is not authentication or authorization.
 """
 
 from fastapi import FastAPI
