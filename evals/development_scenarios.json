@@ -1,5 +1,6 @@
 {
-  "contract_version": 1,
+  "contract_version": 2,
+  "contract_changes": ["v2 (2026-11-01, before any benchmark run): money rounding fixed to ROUND_HALF_UP at the cent, applied once to the final price (prototype convention; the sources define no rounding). Half-cent cases now have one expected value; discounted_price uses expected_cents."],
   "set": "development",
   "notice": "Specification only: user messages and pass criteria. No assistant replies, runs or measured results are stored here. Reserved validation cases are not in this repository.",
   "data_version": {
@@ -216,7 +217,7 @@
       "checks": [
         {"type": "product", "product_id": 90, "price_cents": 239900, "status": "active", "stock_quantity": 3},
         {"type": "promotion", "promotion_id": 19, "product_id": 90, "discount_basis_points": 1800, "is_active": 1},
-        {"type": "discounted_price", "product_id": 90, "base_cents": 239900, "discount_basis_points": 1800, "allowed_cents": [196718]},
+        {"type": "discounted_price", "product_id": 90, "base_cents": 239900, "discount_basis_points": 1800, "expected_cents": 196718},
         {"type": "manual_phrase", "section": "6.2", "page": 6, "text": "preços promocionais devem sempre ser apresentados junto ao preço original e o percentual de desconto"}
       ],
       "data_access": {"required": ["catalog"], "forbidden": []},
@@ -273,7 +274,7 @@
       "references": {"products": [92], "categories": [], "promotions": [], "manual": [{"section": "3", "page": 3}]},
       "checks": [
         {"type": "product", "product_id": 92, "price_cents": 129900},
-        {"type": "discounted_price", "product_id": 92, "base_cents": 129900, "discount_basis_points": 500, "allowed_cents": [123405]},
+        {"type": "discounted_price", "product_id": 92, "base_cents": 129900, "discount_basis_points": 500, "expected_cents": 123405},
         {"type": "manual_phrase", "section": "3", "page": 3, "text": "5% de desconto sobre o preço de tabela"}
       ],
       "data_access": {"required": ["catalog"], "forbidden": []},
@@ -300,7 +301,7 @@
           "user": "E se eu pagar no PIX, ganho mais 5% em cima desse valor?",
           "expect": {
             "inform": ["No: promotions are not cumulative and the PIX 5% does not apply to promotional prices; the price stays R$ 5.519,08."],
-            "must_not_claim": ["A stacked price of about R$ 5.243,12 / R$ 5.243,13."]
+            "must_not_claim": ["A stacked price of R$ 5.243,13 (or any PIX discount on top of R$ 5.519,08)."]
           }
         }
       ],
@@ -308,8 +309,8 @@
       "checks": [
         {"type": "product", "product_id": 94, "price_cents": 599900, "status": "active"},
         {"type": "promotion", "promotion_id": 24, "product_id": 94, "discount_basis_points": 800, "is_active": 1},
-        {"type": "discounted_price", "product_id": 94, "base_cents": 599900, "discount_basis_points": 800, "allowed_cents": [551908]},
-        {"type": "discounted_price", "base_cents": 551908, "discount_basis_points": 500, "allowed_cents": [524312, 524313], "note": "Forbidden stacked value, recorded so the evaluator can detect it."},
+        {"type": "discounted_price", "product_id": 94, "base_cents": 599900, "discount_basis_points": 800, "expected_cents": 551908},
+        {"type": "discounted_price", "base_cents": 551908, "discount_basis_points": 500, "expected_cents": 524313, "note": "Forbidden stacked value, recorded so the evaluator can detect it."},
         {"type": "manual_phrase", "section": "6.2", "page": 6, "text": "O desconto de PIX (5%) não se aplica sobre preços já promocionais"}
       ],
       "data_access": {"required": ["catalog"], "forbidden": []},
@@ -345,7 +346,7 @@
       "checks": [
         {"type": "product", "product_id": 121, "price_cents": 54900},
         {"type": "promotion", "promotion_id": 14, "product_id": 121, "discount_basis_points": 2000, "is_active": 1},
-        {"type": "discounted_price", "product_id": 121, "base_cents": 54900, "discount_basis_points": 2000, "allowed_cents": [43920]},
+        {"type": "discounted_price", "product_id": 121, "base_cents": 54900, "discount_basis_points": 2000, "expected_cents": 43920},
         {"type": "installment", "total_cents": 43920, "installments": 4, "per_installment_cents": 10980},
         {"type": "installment", "total_cents": 43920, "installments": 5, "per_installment_cents": 8784},
         {"type": "installment", "total_cents": 43920, "installments": 6, "per_installment_cents": 7320},
@@ -527,7 +528,7 @@
       ],
       "references": {"products": [94], "categories": [], "promotions": [24], "manual": [{"section": "4.2", "page": 4}, {"section": "8.1", "page": 7}, {"section": "8.2", "page": 7}]},
       "checks": [
-        {"type": "discounted_price", "product_id": 94, "base_cents": 599900, "discount_basis_points": 800, "allowed_cents": [551908]},
+        {"type": "discounted_price", "product_id": 94, "base_cents": 599900, "discount_basis_points": 800, "expected_cents": 551908},
         {"type": "manual_phrase", "section": "4.2", "page": 4, "text": "podem ser trocados em até 30 (trinta) dias corridos após a compra"},
         {"type": "manual_phrase", "section": "8.1", "page": 7, "text": "garantia legal de 90 (noventa) dias contra defeitos de fabricação"}
       ],
@@ -566,11 +567,11 @@
     },
     {
       "id": "DEV-019",
-      "title": "Cheapest soprano ukulele and PIX with undefined rounding",
+      "title": "Cheapest soprano ukulele and PIX with a half-cent result",
       "category": "continuity",
-      "tags": ["referent_resolution", "cheapest", "pix_list_price", "rounding_undefined", "multi_turn"],
+      "tags": ["referent_resolution", "cheapest", "pix_list_price", "half_cent_rounding", "multi_turn"],
       "language": "pt-BR",
-      "goal": "Resolve 'o mais barato' and 'e no PIX?' from context; handle the half-cent PIX result without inventing a rounding rule.",
+      "goal": "Resolve 'o mais barato' and 'e no PIX?' from context; give the PIX price of a half-cent result with the contract's rounding.",
       "preconditions": ["Active data generation matching data_version."],
       "turns": [
         {
@@ -589,7 +590,7 @@
         {
           "user": "E no PIX?",
           "expect": {
-            "inform": ["About R$ 151,90 (5% off R$ 159,90 is R$ 151,905; either cent rounding is acceptable, or the agent may state the exact half-cent result)."],
+            "inform": ["R$ 151,91 with PIX (5% off R$ 159,90 = R$ 151,905, rounded half up to the cent)."],
             "must_not_claim": ["A price for a different product."]
           }
         }
@@ -599,7 +600,7 @@
         {"type": "product_set", "category_id": 9, "name_contains": "Soprano", "available_only": true, "product_ids": [116, 117, 118, 119]},
         {"type": "product", "product_id": 119, "price_cents": 15990, "status": "active"},
         {"type": "promotion", "promotion_id": 11, "product_id": 119, "is_active": 0},
-        {"type": "discounted_price", "product_id": 119, "base_cents": 15990, "discount_basis_points": 500, "allowed_cents": [15190, 15191], "note": "5% of R$ 159,90 leaves half a cent; the sources define no rounding rule."}
+        {"type": "discounted_price", "product_id": 119, "base_cents": 15990, "discount_basis_points": 500, "expected_cents": 15191, "note": "Half-cent result; ROUND_HALF_UP is a prototype convention (the sources define no rounding)."}
       ],
       "data_access": {"required": ["catalog"], "forbidden": []},
       "critical_failures": [],
@@ -685,7 +686,7 @@
       "id": "DEV-022",
       "title": "Topic switch and return to an earlier product",
       "category": "continuity",
-      "tags": ["referent_resolution", "topic_switch", "exchanges", "rounding_undefined", "multi_turn"],
+      "tags": ["referent_resolution", "topic_switch", "exchanges", "half_cent_rounding", "multi_turn"],
       "language": "pt-BR",
       "goal": "Keep track of an earlier product after a policy question in between.",
       "preconditions": ["Active data generation matching data_version."],
@@ -705,7 +706,7 @@
         {
           "user": "Beleza. E aquele primeiro, quanto fica no PIX?",
           "expect": {
-            "inform": ["Refers to the Yamaha C40: about R$ 569,90 (5% off R$ 599,90 is R$ 569,905; either cent rounding is acceptable)."],
+            "inform": ["Refers to the Yamaha C40: R$ 569,91 with PIX (5% off R$ 599,90 = R$ 569,905, rounded half up)."],
             "must_not_claim": ["A price for another product."]
           }
         }
@@ -713,7 +714,7 @@
       "references": {"products": [81], "categories": [], "promotions": [], "manual": [{"section": "4.3", "page": 4}, {"section": "3", "page": 3}]},
       "checks": [
         {"type": "product", "product_id": 81, "price_cents": 59990, "stock_quantity": 12, "status": "active"},
-        {"type": "discounted_price", "product_id": 81, "base_cents": 59990, "discount_basis_points": 500, "allowed_cents": [56990, 56991], "note": "Half-cent result; no rounding rule in the sources."},
+        {"type": "discounted_price", "product_id": 81, "base_cents": 59990, "discount_basis_points": 500, "expected_cents": 56991, "note": "Half-cent result; ROUND_HALF_UP is a prototype convention (the sources define no rounding)."},
         {"type": "manual_phrase", "section": "4.3", "page": 4, "text": "permitidas em até 7 dias, mediante disponibilidade do produto desejado"}
       ],
       "data_access": {"required": ["catalog", "policies"], "forbidden": []},
@@ -806,7 +807,7 @@
       "references": {"products": [94], "categories": [], "promotions": [24], "manual": [{"section": "6.2", "page": 6}, {"section": "4.1", "page": 4}]},
       "checks": [
         {"type": "product", "product_id": 94, "price_cents": 599900, "stock_quantity": 4, "status": "active"},
-        {"type": "discounted_price", "product_id": 94, "base_cents": 599900, "discount_basis_points": 800, "allowed_cents": [551908]}
+        {"type": "discounted_price", "product_id": 94, "base_cents": 599900, "discount_basis_points": 800, "expected_cents": 551908}
       ],
       "data_access": {"required": ["catalog"], "forbidden": ["orders", "customers", "write_operations"]},
       "critical_failures": ["Claims a reservation, purchase, cancellation, refund or human handoff happened."],

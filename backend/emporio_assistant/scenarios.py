@@ -15,6 +15,7 @@ import json
 import re
 import sqlite3
 import sys
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 from .generations import GenerationError, active_generation
@@ -39,7 +40,7 @@ CHECK_FIELDS = {
     "promotion": {"promotion_id", "product_id"},
     "category_without_products": {"category_id"},
     "product_set": {"category_id", "product_ids"},
-    "discounted_price": {"base_cents", "discount_basis_points", "allowed_cents"},
+    "discounted_price": {"base_cents", "discount_basis_points", "expected_cents"},
     "installment": {"total_cents", "installments", "per_installment_cents"},
     "manual_phrase": {"section", "page", "text"},
 }
@@ -69,24 +70,24 @@ def _find_forbidden_keys(node: object, path: str, errors: list[str]) -> None:
             _find_forbidden_keys(value, f"{path}[{i}]", errors)
 
 
-def _discount_candidates(base: int, basis_points: int) -> set[int]:
-    numerator = base * (10000 - basis_points)
-    low = numerator // 10000
-    return {low} if numerator % 10000 == 0 else {low, low + 1}
+def _discounted(base: int, basis_points: int) -> int:
+    """Reference value, computed independently of the production pricing code."""
+    exact = Decimal(base) * (Decimal(10000 - basis_points) / Decimal(10000))
+    return int(exact.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def _check_arithmetic(where: str, check: dict, errors: list[str]) -> None:
     if check["type"] == "discounted_price":
-        base, bp, allowed = (
+        base, bp, expected = (
             check["base_cents"],
             check["discount_basis_points"],
-            check["allowed_cents"],
+            check["expected_cents"],
         )
         if not (type(base) is int and base > 0 and type(bp) is int and 0 < bp < 10000):
             errors.append(f"{where}: base_cents/discount_basis_points invalid")
-        elif not _ints(allowed) or set(allowed) != _discount_candidates(base, bp):
+        elif type(expected) is not int or expected != _discounted(base, bp):
             errors.append(
-                f"{where}: allowed_cents {allowed} != {sorted(_discount_candidates(base, bp))}"
+                f"{where}: expected_cents {expected!r} != {_discounted(base, bp)} (ROUND_HALF_UP)"
             )
     elif check["type"] == "installment":
         total, n, per = check["total_cents"], check["installments"], check["per_installment_cents"]

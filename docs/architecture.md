@@ -1,6 +1,6 @@
 # Architecture baseline and decision register
 
-Status: approved direction. Implemented so far: health API + status page (EMP-4) and offline data preparation (EMP-5, see `docs/data.md`); no agent yet. Original assignment wins over a mistaken paraphrase here; document mismatches.
+Status: approved direction. Implemented so far: health API + status page (EMP-4), offline data preparation (EMP-5, `docs/data.md`), development scenarios (EMP-6), budget ledger + offline runner (EMP-7, `docs/evaluation.md`) and read-only tools with deterministic commercial rules (EMP-8, `docs/tools.md`); no agent yet. Original assignment wins over a mistaken paraphrase here; document mismatches.
 
 ## Product and boundaries
 Empório da Música support assistant. Reduce repetitive inquiries while keeping stock, price and policy answers accurate. Store tone: welcoming, informal, professional and knowledgeable, without pressure or invented claims.

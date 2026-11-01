@@ -1,11 +1,29 @@
 # Session handoff
 
-## Current state (2026-11-01, EMP-5 fix and EMP-6 ready for Matheus review)
-- Git: `main` at `d2c88b0` (EMP-5 committed). EMP-5 generation fix and EMP-6 uncommitted; Matheus stages/commits (two commits suggested).
-- Linear: no connector in the Claude session; proposed: EMP-5 stays In Review with the fix noted, EMP-6 In Review. EMP-7 (budget control) is next and not started.
-- Implemented: health API + status page (EMP-4); offline data preparation published as generations (EMP-5); 30 development scenarios + validator (EMP-6). No agent, tools, catalog API, budget control or model code yet.
-- Live calls / spend: none. Claude Code billing mode still unconfirmed (required before any paid test).
-- Owner pending: create and hold the 10 reserved validation cases outside the repository (protocol in `docs/evaluation.md`).
+## Current state (2026-11-01, EMP-7 and EMP-8 ready for Matheus review)
+- Git: `main` at `b82d8df` (EMP-5 fix + EMP-6 committed). EMP-7 and EMP-8 uncommitted; Matheus stages/commits.
+- Linear: no connector in the Claude session; proposed: EMP-7 and EMP-8 In Review with the evidence below.
+- Implemented: health API + status page (EMP-4); data generations (EMP-5); 30 scenarios + validator (EMP-6); budget ledger, guarded call path and SIMULATED runner (EMP-7); read-only tools and commercial rules (EMP-8). No agent, prompt, model SDK, chat endpoint or UI yet.
+- Live calls / spend: none. No price verified in `config/pricing.json`, so the paid path refuses every model. Claude Code billing mode still unconfirmed.
+- Owner pending: the 10 reserved validation cases (outside the repo); verify official prices and the exact model id before EMP-9; create the live ledger (`budget init --mode live`) before the first paid run.
+
+## 2026-11-01 — EMP-8 read-only tools and deterministic commercial rules
+- Files: `backend/emporio_assistant/commerce.py`, `tools.py`, `tests/test_commerce.py`, `tests/test_tools.py`, `docs/tools.md`; scenario contract v2 (`evals/development_scenarios.json`, `scenarios.py`, `test_scenarios.py`, `docs/evaluation.md`).
+- Tools: `search_products`, `get_product`, `quote_price`, `list_categories`; strict Pydantic arguments (no coercion, no extra fields), literal accent-insensitive search via `instr`, offer-price filters shared with the quote, allowlisted sorting, limit ≤ 10. One `CatalogSnapshot` per operation pins one generation; catalog opened `mode=ro` + `query_only`. Sanitized error codes; diagnostics only in the local log.
+- Rules: availability classes; one active promotion → offer price, several → `needs_confirmation`; PIX 5% on list price only; ROUND_HALF_UP once to the cent (prototype convention); installments classified against both manual rules (`supported` / `not_supported` / `needs_confirmation`), split keeps the exact total; split-payment PIX and R$ 500,00 / contacts left unresolved.
+- Contract change (before any benchmark run): scenario money now has one expected value, ROUND_HALF_UP (`discounted_price.expected_cents`; DEV-010 stacked value R$ 5.243,13, DEV-019 R$ 151,91, DEV-022 R$ 569,91). The validator recomputes it with `Decimal`, independently of `commerce.py`.
+- Real-data cross-check (offline, generation `20261101T125243264432Z-10abfa`): tool quotes equal all 8 product-based scenario `discounted_price` values; installment amounts/classes match DEV-011 (4x supported, 5x needs confirmation, 6x not supported) and DEV-020 (12x R$ 183,25 supported); available sets match DEV-001/005/021; availability of 96/136/130 = out_of_stock/discontinued/coming_soon; empty categories 6–8 reported. One expected difference: a "Soprano" text search also returns tenor 124 because its description mentions soprano (search covers descriptions; documented).
+- Not done: no agent or prompt-injection test with a model; no API endpoint for the tools.
+
+## 2026-11-01 — EMP-7 budget ledger, guarded call path and offline runner
+- Files: `backend/emporio_assistant/pricing.py`, `budget.py`, `runner.py`, `config/pricing.json`, `tests/test_budget.py`, `tests/test_runner.py`; `.gitignore` adds `data/budget/`.
+- Ledger: SQLite in micro-USD, `BEGIN IMMEDIATE` per write, explicit `init`, missing file = error; states reserved/dispatched/settled/released/uncertain; holds on overrun or unpriceable usage; caps 7/2 USD, margin 1 USD never used by code.
+- Tests (fictitious prices): insufficient budget refused before dispatch; reservation lowers availability; known usage settled; repeated settle idempotent, conflicting settle refused; timeout/connection error/missing usage keep the reservation; `NotSent` releases it; reopen preserves state, missing ledger not recreated; 8 processes racing for 2 USD each → exactly 3 reserved; SDK retries refused, reused op id refused, retry with a new id counted; unknown price/missing or zero output limit refused; shipped config has no priceable model; margin and the other budget untouched; overrun recorded and blocks until `clear-hold`; live ledger refuses fictitious prices. Runner: SIMULATED/ungraded label, no expected answers in the output, per-scenario history, errors recorded, budget errors stop the run.
+- CLI checks: `runner --smoke` wrote a SIMULATED run to `evals/results/` (ignored); `budget init/summary` on a `.local` ledger; a missing ledger → "FAILED: budget ledger is missing or unreadable", no file created.
+- Limits: the ledger only governs code calling `guarded_call`; adapters must pass `timeout_s`, disable SDK retries and raise `NotSent` only when nothing was sent; a reservation whose `dispatched` write failed stays held until reconciled; real usage mapping per provider is verified with each adapter.
+
+## 2026-11-01 — checks for EMP-7 + EMP-8
+- `ruff format --check`, `ruff check` clean; `pytest` 125 passed (1 known `StarletteDeprecationWarning`); scenarios structure OK and references OK (92 checks); `verify.py --mode app` with `.venv` Python and `PYTHONDONTWRITEBYTECODE=1` → HARNESS PASS + APP OFFLINE CHECKS PASS.
 
 ## 2026-11-01 — EMP-6 development scenarios and evaluation contract
 - Files: `evals/development_scenarios.json` (contract v1, DEV-001–030, smoke suite of 7), `backend/emporio_assistant/scenarios.py` (validator CLI), `backend/tests/test_scenarios.py`; `docs/evaluation.md` gained the contract, distribution, smoke rationale, human rubric, critical failures and the reserved-case protocol.
@@ -96,7 +114,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews and commits the EMP-5 generation fix and EMP-6 (separate commits), and creates the 10 reserved cases outside the repo. Next card: EMP-7 (minimal budget control) before any paid call.
+Matheus reviews and commits EMP-7 + EMP-8. Next block: EMP-9 (Haiku full-manual baseline through `guarded_call` and these tools) and EMP-10 (chat UI), after prices and the model id are verified.
 
 ## Update template
 - Date / EMP issue:

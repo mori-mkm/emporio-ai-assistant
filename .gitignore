@@ -47,6 +47,7 @@ node_modules/
 *.log
 logs/
 evals/results/
+data/budget/
 
 # --- Data derived from the challenge sources (SQLite catalog, manual extraction, quality report) ---
 # Kept local until the distribution of the original material is decided.

@@ -11,9 +11,11 @@ What works today:
 - React + TypeScript (Vite) page with the store identity, a notice that support is still being prepared, and a live check of the API connection (checking / available / failed states, with a retry button).
 - Data preparation (EMP-5): a command that validates the challenge catalog CSVs (categories, products, promotions), builds a local SQLite catalog, and extracts the store manual by page and section with source hashes. Customers and orders are not loaded. See [docs/data.md](docs/data.md).
 - Evaluation scenarios (EMP-6): 30 development scenarios with pass criteria in `evals/development_scenarios.json` and a validator for their structure and their references to the prepared data. No model has been run against them. See [docs/evaluation.md](docs/evaluation.md).
+- Budget control (EMP-7): a persistent SQLite ledger and one guarded path that reserves the worst-case cost before any future paid call, keeps reservations when the outcome is uncertain and settles reported usage. No price is verified yet, so paid calls are refused; no model SDK is installed. An offline runner drives the scenarios through a placeholder executor and labels every run SIMULATED. See [docs/evaluation.md](docs/evaluation.md).
+- Read-only catalog tools (EMP-8): `search_products`, `get_product`, `quote_price`, `list_categories` with strict arguments, availability classes, promotion/PIX rules, ROUND_HALF_UP rounding and installment classification against both manual rules. Not yet used by an agent. See [docs/tools.md](docs/tools.md).
 - Offline checks: Ruff and pytest for the backend (synthetic fixtures, no challenge data needed); lint, typecheck and build for the frontend.
 
-Planned next (not available yet): read-only product/policy tools, the single-agent chat with Claude Haiku as the first model, evaluation and budget controls. See `docs/plan.md`.
+Planned next (not available yet): the single-agent chat with Claude Haiku as the first model (EMP-9) and the chat UI (EMP-10). See `docs/plan.md`.
 
 ## Prerequisites
 
@@ -97,7 +99,8 @@ Set-Location frontend; npm run lint; npm run typecheck; npm run build; Set-Locat
 
 ## Limits of this stage
 
-- No chat, model provider, retrieval, business tools or catalog API. The prepared catalog and manual are not served or used yet.
+- No chat, model provider, retrieval or catalog API. The tools run locally only; no endpoint serves them.
+- The budget ledger only controls application code that goes through it; it cannot see or stop other spending on provider accounts or Claude Code's own billing.
 - No customer or order data: those challenge tables are deliberately not loaded in v1.
 - The catalog is a static snapshot of the challenge files, not live inventory. Source ambiguities are documented in `docs/data.md`, not resolved.
 - No authentication, deployment or production server configuration; the Vite proxy is for local development only.

@@ -70,7 +70,7 @@ file is published.
 **Money.** `price_brl` is parsed with `Decimal` (plain digits, `.` decimal separator, at most
 2 places) and stored as integer cents: `599.9` → `59990`. Discounts are stored as integer
 basis points: `15` → `1500`. No float is used. Final prices, PIX and installment
-calculations belong to EMP-8.
+calculations are in `commerce.py` (EMP-8, see `docs/tools.md`).
 
 ## Validation
 
@@ -130,7 +130,7 @@ identifies the bytes used, not the correctness of the text.
 ## Source evidence and open questions
 
 References are manual section (page). These are documented facts and doubts, not decisions;
-pricing/installment rules are settled in EMP-8.
+how the tools apply them is in `docs/tools.md` (EMP-8).
 
 - **Contacts disagree.** Phone/WhatsApp (67) 3341-4444 on the cover (p1) and in §1.2 (p2);
   §7 (p6) names WhatsApp (67) 3321-4500 as the main remote channel. E-mail is
@@ -153,8 +153,8 @@ pricing/installment rules are settled in EMP-8.
   alternatives, never confirm availability without checking stock. Product 96 is `active`
   with zero stock, so status alone is not availability.
 - **Discontinued with stock.** §7.3 (p7): a discontinued product "não faz mais parte do
-  catálogo". Product 136 is discontinued with 13 units. The sources conflict; how to present
-  it is an EMP-8 decision.
+  catálogo". Product 136 is discontinued with 13 units. The sources conflict; EMP-8 classifies
+  it as `discontinued` (no immediate purchase) and keeps the recorded stock as data.
 - **Coming soon.** The manual does not mention `coming_soon`. Product 130 has stock 2. No
   release date or purchase rule exists in the sources.
 - **Shipping.** §5.1 (p4): free "acima de R$ 500,00", fixed R$ 35,00 "abaixo de R$ 500,00";

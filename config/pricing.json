@@ -1,0 +1,15 @@
+{
+  "pricing_version": "0-unverified",
+  "fictitious": false,
+  "notice": "No price has been verified yet, so every model is unpriceable and the paid path refuses to dispatch. Matheus fills source, checked_on and categories from the provider's official price page before any live run.",
+  "models": [
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku (exact id to be confirmed)",
+      "unit": "usd_per_million_tokens",
+      "source": null,
+      "checked_on": null,
+      "categories": {}
+    }
+  ]
+}

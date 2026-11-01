@@ -52,8 +52,8 @@ def test_stored_assistant_reply_or_result_is_rejected(data):
 
 def test_wrong_money_value_is_rejected(data):
     check = next(c for c in data["scenarios"][6]["checks"] if c["type"] == "discounted_price")
-    check["allowed_cents"] = [196717]
-    assert any("allowed_cents" in e for e in validate_structure(data))
+    check["expected_cents"] = 196717
+    assert any("expected_cents" in e for e in validate_structure(data))
 
 
 def _one_scenario(generation, check: dict) -> dict:
