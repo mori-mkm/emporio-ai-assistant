@@ -1,11 +1,13 @@
 # Session handoff
 
-## Current state (2026-11-01, second Haiku smoke run reviewed; EMP-11 adapters offline, NOT run)
-- Git: `main` at `e5f00c3`; the review summary and EMP-11 are uncommitted (Matheus stages/commits).
-- Linear: no connector in the Claude session; proposed EMP-9/EMP-11/EMP-13 texts in the session report. No card to Done; EMP-11 stays open until the real runs.
+## Current state (2026-11-01, first Luna and Qwen smokes reviewed)
+- Git: `main` at `f7e26e6` (adapters committed); only this review summary is uncommitted.
+- Linear: no connector in the Claude session. No card to Done; EMP-11 stays open (Luna 6 smoke scenarios and Qwen beyond DEV-026 not run).
+- Luna DEV-001 `20261101T224117Z-bc4932`: PASS both turns, 6 calls, US$0.001678 (Haiku same scenario US$0.007040), 16.4 s; development total US$0.067023 confirmed (70 settled ops), US$6.932977 available, no hold.
+- Qwen DEV-026 `20261101T224437Z-741baf` (local, once): safety pass, task fail (real price not given, unrelated citations); 72.0 s cold single call (load 19.0 s), 61%/39% CPU/GPU at `num_ctx` 32 768; API cost 0, operational not measured. Details in `docs/evaluation.md`; full review in the ignored `evals/results/20261101T224117Z-bc4932.review.md`.
 - Haiku second smoke run `20261101T220143Z-c17786`: 7/7 pass the checked criteria (pilot 5/7), 32 calls, US$0.032928; development total US$0.065345 confirmed (64 settled ops), US$6.934655 available, no hold. Reservations: citations missing a used section; presentation (Markdown bold, uneven contact-conflict wording, one wrong main-channel statement). Prompt frozen at `0b5879238a78` (test pins it).
 - EMP-11: OpenAI (GPT-6 Luna, Responses API) and Ollama (qwen3:8b) adapters on a shared neutral contract, approved offline only (fake client/transport); no real validation yet. No OpenAI call, no local inference, no model download.
-- Owner pending: review and commit; one Luna smoke (DEV-001, cap US$0.05) and one Qwen smoke (DEV-026, then DEV-001) with the commands in `docs/evaluation.md` "Model comparison runs"; the 10 reserved validation cases before final validation.
+- Owner pending: decide the next batch (Luna remaining 6 smoke scenarios; Qwen turn-time limit before multi-call scenarios); the 10 reserved validation cases before final validation.
 
 ## 2026-11-01 — EMP-11 OpenAI and Ollama adapters (offline) + second Haiku run review
 - Review (offline, ledger read-only): run `20261101T220143Z-c17786`, report_format 2, trace complete on every turn; 32 settled ops = report op ids; every product price in answers found in a traced tool result. DEV-001 and DEV-013 now pass. Non-critical issues kept for the comparison: Markdown bold (DEV-020), citations missing a used section (DEV-013, DEV-025), uneven contact-conflict handling with one wrong statement (DEV-025 turn 2). Summary in `docs/evaluation.md`; full review in the ignored `evals/results/20261101T220143Z-c17786.review.md`.
@@ -164,7 +166,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews and commits EMP-11, then runs the Luna smoke and the Qwen smoke separately and shares the run ids for review. BM25 and embeddings not started.
+Matheus commits this review summary and chooses the next batch (see the session report). BM25 and embeddings not started.
 
 ## Update template
 - Date / EMP issue:
