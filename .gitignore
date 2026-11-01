@@ -1,0 +1,48 @@
+# --- Original challenge sources (kept local in the first commit; final data distribution policy is still open) ---
+*.zip
+/Desafio Técnico AI Engineer 2026/
+
+# --- Secrets and credentials (.env.example stays versioned) ---
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+*credentials*.json
+
+# --- Private content and reserved validation cases ---
+.private/
+evals/holdout/
+
+# --- Claude Code local/personal files ---
+.claude/settings.local.json
+CLAUDE.local.md
+
+# --- Python environments, caches and bytecode ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node ---
+node_modules/
+
+# --- Generated databases, logs and local results ---
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+logs/
+evals/results/

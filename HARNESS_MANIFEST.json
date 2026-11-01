@@ -1,0 +1,31 @@
+{
+  "version": "1.0.0",
+  "created": "2026-11-01",
+  "target_claude_code": "2.1.314",
+  "extract": "Project root; no enclosing directory",
+  "application_implemented": false,
+  "api_calls_executed": false,
+  "files": {
+    ".claude/agents/reviewer.md": "6222a2e25d287f30aa3ee31f9c430c186f3065d39796576a47cbe5a67fbcc01f",
+    ".claude/hooks/guard.py": "6222e2e53e69717a741ced4b7b74064347bed2502923390ac2fd67b889121ea9",
+    ".claude/rules/backend.md": "ad1eb3644dab93765c0ac9d4d818da43cf3193905f200c64cdf3ac23330779c1",
+    ".claude/rules/evaluation.md": "60a609182b34e4cced048cf13e19e313477b156e00026f9c797e27b439325166",
+    ".claude/rules/frontend.md": "335ebfe09a493ce18d1d9598cce83f88adc31faf7a5c385aae15b5336bc64593",
+    ".claude/settings.json": "9f04cad6024d2efccf38d9b6b018f9d73a3281e4d15df15be0f8923fa46135cd",
+    "AGENTS.md": "19b83fc2a647a046c1d2b1409688510b9fd6cea98da55aad18369bef3e83925e",
+    "CLAUDE.md": "6eaae4a1a4259f5d7d6d1226b136af4141f25dd50c5cf2d486672eef80a3fcbb",
+    "START_HERE.md": "36e991d527504070496341703c6b62c9047571b2791769d8b855727ee37f3c09",
+    "docs/architecture.md": "7a9bb29f2bb13871d2f66c04d08df9eb88e722885a0129d79f506a0ef5872e68",
+    "docs/development.md": "83f78938b8f51143641e706c35480b112fe9d0ceae0d67f8b9cccea3cdba5a18",
+    "docs/evaluation.md": "7d7e4707435b226d093eb4f3bee53757493d34fc563210292d20b1a16cd08162",
+    "docs/plan.md": "c2d9fa84ffb51bb33e9ea29cb13ab670a90976e152957749f8d574ed53e888ba",
+    "docs/progress.md": "eb158eded43092547dc8f9f32d482714d0f0c4aa219911cc2c3b88d31170bba1",
+    "docs/prompts.md": "e027a3cf7581fd4a5c86e783a86a0400925d08ed58e15d409a8791bd2313050b",
+    "docs/references.md": "13ea256dd0d9e2d1472418599c873babfdd4c6793fbb3f483df0828f49ff0792",
+    "docs/security.md": "e2ceb4953961d72f11bc053f6a0ef052a5fb3f35dec9aaec026634f880a0b723",
+    "docs/verification.md": "3659bc99db5b2d045ac41497ba22287bf3178c1efa4970452d70d63d1414cf66",
+    "scripts/verify.ps1": "356aa305f617494c8307b578802b1bb74f4946bccd3bc80c310581fb41b877ed",
+    "scripts/verify.py": "8e5054707db825b4e7c9a995e31efed15a2e54c70b2a76ebac3579ae6e36f0e7",
+    "tests/harness/test_guard.py": "8014726666579acc0db00f8ad61cf3df8fa58663f0d0590ac3262ca3e5a69508"
+  }
+}
