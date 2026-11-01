@@ -10,6 +10,7 @@ What works today:
 - FastAPI backend with one public endpoint, `GET /api/health`, returning `{"status": "ok", "service": "emporio-ai-assistant"}`. It needs no `.env`, credentials, database or model provider.
 - React + TypeScript (Vite) page with the store identity, a notice that support is still being prepared, and a live check of the API connection (checking / available / failed states, with a retry button).
 - Data preparation (EMP-5): a command that validates the challenge catalog CSVs (categories, products, promotions), builds a local SQLite catalog, and extracts the store manual by page and section with source hashes. Customers and orders are not loaded. See [docs/data.md](docs/data.md).
+- Evaluation scenarios (EMP-6): 30 development scenarios with pass criteria in `evals/development_scenarios.json` and a validator for their structure and their references to the prepared data. No model has been run against them. See [docs/evaluation.md](docs/evaluation.md).
 - Offline checks: Ruff and pytest for the backend (synthetic fixtures, no challenge data needed); lint, typecheck and build for the frontend.
 
 Planned next (not available yet): read-only product/policy tools, the single-agent chat with Claude Haiku as the first model, evaluation and budget controls. See `docs/plan.md`.
@@ -48,7 +49,7 @@ $src = 'C:\path\to\Desafio Técnico AI Engineer 2026'
     --output-dir data\derived
 ```
 
-It writes `catalog.sqlite`, `policies.json` and `quality_report.json` to `data\derived` (git-ignored) and prints counts and warnings. Exit code 1 means validation failed and previous files were kept. Schema, money representation, data snapshot and the ambiguities found in the sources are in [docs/data.md](docs/data.md). The API does not use these files yet.
+It publishes a new generation (`catalog.sqlite`, `policies.json`, `quality_report.json`) under `data\derived\generations\`, makes it active through `data\derived\current.json` (all git-ignored) and prints counts and warnings. Exit code 1 means validation or publication failed and the active generation was not changed. Code that needs the files resolves them with `emporio_assistant.generations.active_generation`. Schema, money representation, data snapshot and the ambiguities found in the sources are in [docs/data.md](docs/data.md). The API does not use these files yet.
 
 Tests use small synthetic fixtures (`backend/tests/fixtures/synthetic_catalog/`), not the store's data.
 

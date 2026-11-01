@@ -1,10 +1,24 @@
 # Session handoff
 
-## Current state (2026-11-01, EMP-5 ready for Matheus review)
-- Git: `main` at `8ea79af` (EMP-4 committed). EMP-5 changes uncommitted; Matheus stages/commits.
-- Linear (per owner review): EMP-3 done, EMP-4 in review, EMP-5 current. No Linear connector in the Claude session: updates are proposed, not applied.
-- Implemented: health API + status page (EMP-4); offline data preparation (EMP-5). No agent, tools, catalog API, budget control or model code yet.
+## Current state (2026-11-01, EMP-5 fix and EMP-6 ready for Matheus review)
+- Git: `main` at `d2c88b0` (EMP-5 committed). EMP-5 generation fix and EMP-6 uncommitted; Matheus stages/commits (two commits suggested).
+- Linear: no connector in the Claude session; proposed: EMP-5 stays In Review with the fix noted, EMP-6 In Review. EMP-7 (budget control) is next and not started.
+- Implemented: health API + status page (EMP-4); offline data preparation published as generations (EMP-5); 30 development scenarios + validator (EMP-6). No agent, tools, catalog API, budget control or model code yet.
 - Live calls / spend: none. Claude Code billing mode still unconfirmed (required before any paid test).
+- Owner pending: create and hold the 10 reserved validation cases outside the repository (protocol in `docs/evaluation.md`).
+
+## 2026-11-01 — EMP-6 development scenarios and evaluation contract
+- Files: `evals/development_scenarios.json` (contract v1, DEV-001–030, smoke suite of 7), `backend/emporio_assistant/scenarios.py` (validator CLI), `backend/tests/test_scenarios.py`; `docs/evaluation.md` gained the contract, distribution, smoke rationale, human rubric, critical failures and the reserved-case protocol.
+- Content: user messages and pass criteria only, no assistant replies or results; facts referenced by id/section/page (no CSV or manual copy); 10 multi-turn, 4 in English; money values recomputed with integer cents, both cents accepted where PIX leaves half a cent (no rounding rule in the sources).
+- Checks: structure OK without data (clean-clone mode, references reported NOT CHECKED); with `--data-dir data\derived` → references OK, 92 checks against active generation `20261101T125243264432Z-10abfa` (source hashes equal `data_version`). Names, descriptions and specs quoted in expectation text were checked by hand against the same generation. `pytest` 45 passed; Ruff format/check clean; `verify.py --mode app` → APP OFFLINE CHECKS PASS.
+- Not done: no model run, scorer or LLM judge; no accuracy/cost/latency figures. DEV-028/029 need test doubles that the future runner must provide. Reserved cases not created, read or searched for.
+
+## 2026-11-01 — EMP-5 fix: publish prepared data as one consistent generation
+- Problem (owner review of `d2c88b0`): `prepare` replaced `catalog.sqlite`, `policies.json` and `quality_report.json` with three separate renames; a failure after the first left a new catalog next to old policies/report.
+- Fix: new `backend/emporio_assistant/generations.py`. Each run writes `generations/<id>/` (three files, fsynced), `prepare_data` reads them back (JSON parse, SQLite integrity, row counts), then `promote` replaces `current.json` with one `os.replace`. `active_generation(dir)` is the only resolver: one manifest read, fixed file names inside `generations/<id>/`, SHA-256 check, rejects malformed/incomplete generations. Old generations and the legacy root files are never deleted automatically (the CLI prints a note about legacy files). CLI returns 1 with a clear message for validation errors and for expected operational errors (`GenerationError`, `OSError`, `sqlite3.Error`); other exceptions propagate.
+- Tests (`backend/tests/test_generations.py`, observed through `active_generation`): success resolves all three files from one generation; injected failure writing `policies.json` and `quality_report.json` (after the new catalog exists) keeps the previous active generation byte-for-byte; injected failure of the manifest `os.replace` keeps it and leaves no manifest temp; failed first run leaves no active generation; rerun publishes equal content and keeps the old generation; invalid sources and an operational error return 1 with a message; resolver rejects path escape, wrong file name, missing entry, hash mismatch, unknown format, broken JSON and a deleted file. CLI tests moved here from `test_policies.py`.
+- Checks: `ruff format --check`, `ruff check` clean; `pytest` 36 passed. Real run → active generation `20261101T125243264432Z-10abfa`; its `source_files` hashes and the manual hash match the current source files; catalog rows equal the legacy root file; `policies.json` equals the legacy one except line endings (legacy was written in text mode with CRLF, now LF). `git check-ignore` covers `data/derived/current.json` and `data/derived/generations/**`.
+- Limits: no power-loss guarantee at the rename instant; inactive generation folders accumulate until removed manually.
 
 ## 2026-11-01 — EMP-5 validated catalog, SQLite and sourced policies
 - EMP-4 leftovers: interactive check with real input events (`.local/cdp-retry-check.mjs`, local and ignored: headless Edge driven via DevTools Protocol with Node's built-in WebSocket; it starts and stops its own Vite/uvicorn/Edge). Results: API down on load → failure text; Tab focuses "Tentar novamente" with `:focus-visible` and a solid 3px outline; Enter → available; mouse click with API down → failure; Space → available. No leftover processes. Not covered: screen readers, light theme. `main.py` comment corrected (CORS limits browser reads, not requests; not auth).
@@ -82,7 +96,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews EMP-5 and commits it; EMP-4 can close (its UI leftovers now have interactive evidence). Suggested next card: EMP-6 (30 development scenarios from the prepared data and `docs/data.md` evidence; owner keeps the 10 reserved cases outside the repo), then EMP-7 (minimal budget control) before any paid call.
+Matheus reviews and commits the EMP-5 generation fix and EMP-6 (separate commits), and creates the 10 reserved cases outside the repo. Next card: EMP-7 (minimal budget control) before any paid call.
 
 ## Update template
 - Date / EMP issue:

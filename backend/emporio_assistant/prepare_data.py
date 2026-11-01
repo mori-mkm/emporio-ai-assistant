@@ -2,47 +2,68 @@
 
     python -m emporio_assistant.prepare_data --csv-dir DIR --manual FILE --output-dir DIR
 
-Writes to the output directory (each file replaced atomically, only after every
-source validated):
+Validates every source first, writes a new generation folder under
+`<output-dir>/generations/`, checks it, then makes it active by replacing
+`<output-dir>/current.json` once (see `generations.py`):
 - catalog.sqlite       categories, products, promotions (no customers or orders)
 - policies.json        store manual by page and section, with source hash
 - quality_report.json  counts, warnings and ambiguities; no personal data
 
-Exit code 0 on success, 1 when the sources fail validation (nothing replaced).
+Consumers resolve files with `generations.active_generation(output_dir)`.
+Exit code 0 on success; 1 when sources fail validation or publication fails
+(the previously active generation is unchanged).
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
+import sqlite3
 import sys
 from pathlib import Path
 
 from emporio_assistant.catalog import DataPreparationError, build_database, load_catalog
+from emporio_assistant.generations import (
+    FILES,
+    Generation,
+    GenerationError,
+    create_generation_dir,
+    promote,
+    write_file_synced,
+)
 from emporio_assistant.policies import extract_policies
 
-CATALOG_FILE = "catalog.sqlite"
-POLICIES_FILE = "policies.json"
-REPORT_FILE = "quality_report.json"
+LEGACY_FILES = tuple(FILES.values())  # pre-generation layout wrote these to the output root
 
 
-def _write_json_atomic(data: dict, destination: Path) -> None:
-    temp = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
+def _write_json(data: dict, destination: Path) -> None:
+    text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    write_file_synced(destination, text.encode("utf-8"))
+
+
+def _check_generation(directory: Path, report: dict) -> None:
+    """Read the written files back before they can become active."""
+    for name in (FILES["policies"], FILES["quality_report"]):
+        json.loads((directory / name).read_text(encoding="utf-8"))
+    uri = (directory / FILES["catalog"]).as_uri() + "?mode=ro"  # percent-encodes spaces/accents
+    connection = sqlite3.connect(uri, uri=True)
     try:
-        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        os.replace(temp, destination)
-    except BaseException:
-        temp.unlink(missing_ok=True)
-        raise
+        if connection.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+            raise DataPreparationError("Written catalog failed the integrity check.")
+        for table in ("categories", "products", "promotions"):
+            count = connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            if count != report["counts"][table]:
+                raise DataPreparationError(f"Written catalog has an unexpected {table} count.")
+    finally:
+        connection.close()
 
 
 def _inside(path: Path, folder: Path) -> bool:
     return path == folder or folder in path.parents
 
 
-def prepare(csv_dir: Path, manual: Path, output_dir: Path) -> dict:
-    """Validate everything first, then replace the artifacts. Returns the quality report."""
+def prepare(csv_dir: Path, manual: Path, output_dir: Path) -> tuple[Generation, dict]:
+    """Validate, write a generation, check it, promote it. Returns (active generation, report)."""
     csv_dir, manual, output_dir = csv_dir.resolve(), manual.resolve(), output_dir.resolve()
     if not csv_dir.is_dir():
         raise DataPreparationError("--csv-dir is not a directory.")
@@ -85,16 +106,17 @@ def prepare(csv_dir: Path, manual: Path, output_dir: Path) -> dict:
         "excluded_sources": "customers, orders and order_items are not read or loaded",
     }
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    build_database(catalog, output_dir / CATALOG_FILE)
-    _write_json_atomic(policies.as_dict(), output_dir / POLICIES_FILE)
-    _write_json_atomic(report, output_dir / REPORT_FILE)
-    return report
+    generation_id, directory = create_generation_dir(output_dir)
+    build_database(catalog, directory / FILES["catalog"])
+    _write_json(policies.as_dict(), directory / FILES["policies"])
+    _write_json(report, directory / FILES["quality_report"])
+    _check_generation(directory, report)
+    return promote(output_dir, generation_id), report
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Validate challenge sources and build local data artifacts."
+        description="Validate challenge sources and publish a new data generation."
     )
     parser.add_argument(
         "--csv-dir",
@@ -104,17 +126,29 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--manual", type=Path, required=True, help="Store policy manual PDF.")
     parser.add_argument(
-        "--output-dir", type=Path, required=True, help="Folder for the generated artifacts."
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="Folder holding generations/ and current.json.",
     )
     args = parser.parse_args(argv)
     try:
-        report = prepare(args.csv_dir, args.manual, args.output_dir)
+        generation, report = prepare(args.csv_dir, args.manual, args.output_dir)
     except DataPreparationError as exc:
         print(f"FAILED: {exc}", file=sys.stderr)
-        print("No artifact was replaced.", file=sys.stderr)
+        print("The active generation was not changed.", file=sys.stderr)
         return 1
+    except (GenerationError, OSError, sqlite3.Error) as exc:
+        print(f"FAILED while publishing: {type(exc).__name__}: {exc}", file=sys.stderr)
+        print(
+            "The active generation was not changed. An inactive folder may remain under "
+            "generations/; it is never used and can be deleted manually.",
+            file=sys.stderr,
+        )
+        return 1
+
     counts = report["counts"]
-    print(f"OK: wrote {CATALOG_FILE}, {POLICIES_FILE}, {REPORT_FILE} to {args.output_dir}")
+    print(f"OK: active generation {generation.id} in {args.output_dir}")
     print(
         f"  categories={counts['categories']} products={counts['products']} "
         f"promotions={counts['promotions']} (active={counts['active_promotions']}) "
@@ -128,6 +162,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     for warning in report["manual_warnings"]:
         print(f"    - manual: {warning}")
+    legacy = [name for name in LEGACY_FILES if (args.output_dir / name).exists()]
+    if legacy:
+        print(
+            f"  note: {', '.join(legacy)} in the output root come from the old layout; "
+            "they are not used and can be deleted manually."
+        )
     return 0
 
 

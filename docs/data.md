@@ -15,24 +15,45 @@ $src = 'C:\path\to\Desafio Técnico AI Engineer 2026'   # the extracted challeng
 ```
 
 `emporio-prepare-data` (installed in `.venv\Scripts`) is the same entry point. All three
-arguments are required; quote paths with spaces or accents. Exit code 0 = artifacts written,
-1 = validation failed and nothing was replaced. The output folder must be outside the source
-folders.
+arguments are required; quote paths with spaces or accents. Exit code 0 = a new generation is
+active; 1 = validation or publication failed and the active generation was not changed. The
+output folder must be outside the source folders.
 
 `--csv-dir` must contain exactly one file per table, named `<table>.csv` or
 `<prefix> - <table>.csv` (the challenge uses `desafio_tecnico_ai_eng - products.csv`).
 Only `categories`, `products` and `promotions` are read. `customers`, `orders` and
 `order_items` are never opened or loaded: v1 has no customer or order access.
 
-| Output (in `--output-dir`) | Content |
-|---|---|
-| `catalog.sqlite` | Catalog tables + `source_files` (file name, SHA-256, record count) |
-| `policies.json` | Manual source metadata, text per page, sections from the PDF outline |
-| `quality_report.json` | Counts, normalization notes, warnings; no personal data |
+Each run publishes one **generation**: a folder holding the three files, made active by a
+single manifest.
 
-Each file is written to a temp file, verified and then swapped in with an atomic rename,
-only after every source validated. A failed run leaves the previous files as they were.
-Reruns on the same sources produce the same content (no timestamps are stored).
+```text
+data/derived/
+  current.json                      manifest: active generation id + SHA-256 of each file
+  generations/<id>/catalog.sqlite   catalog tables + source_files (file name, SHA-256, records)
+  generations/<id>/policies.json    manual source metadata, text per page, sections
+  generations/<id>/quality_report.json  counts, normalization notes, warnings; no personal data
+```
+
+Publication steps: validate all sources → write a new `generations/<id>/` → read the files
+back (JSON parse, SQLite integrity and row counts) → replace `current.json` with one
+`os.replace`. Only that last step changes what is active, so a consumer never sees a mix of
+generations. If anything fails, the command exits 1, `current.json` still names the previous
+generation, and an unused `generations/<id>/` folder may remain (never referenced; delete it
+manually if you like). Old generations are not deleted automatically.
+
+Consumers must resolve files through `emporio_assistant.generations.active_generation(dir)`.
+It reads the manifest once, accepts only the three expected file names inside
+`generations/<id>/`, checks each file's SHA-256 and rejects a missing, malformed or
+incomplete generation. Files are fsynced before the switch; there is no guarantee for a
+power loss at the instant of the rename (Windows has no directory fsync).
+
+Reruns on the same sources create a new generation with the same content (same rows, same
+`policies.json` bytes; JSON is written with LF line endings on every OS).
+
+**Legacy files.** Runs before this layout wrote `catalog.sqlite`, `policies.json` and
+`quality_report.json` directly in the output root. They are not read by anything, are not
+deleted automatically, and the command prints a note while they exist. Delete them manually.
 
 ## Catalog schema
 
