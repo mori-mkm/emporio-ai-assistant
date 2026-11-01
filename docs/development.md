@@ -15,9 +15,13 @@ Separate responsibilities without building a framework: API contracts, agent loo
 4. Live model eval: explicit bounded runs using the production path and recorded usage; see evaluation plan. Mocks never stand in for these results.
 
 ## Commands
-Existing now: `python scripts/verify.py --mode harness`.
-After app scaffolding, adopt the simple defaults the included verifier expects: backend/pyproject.toml, frontend/package.json, pytest, Ruff and npm scripts lint/typecheck/build. Update these conventions deliberately if the actual layout differs; don't create empty scripts to fake success.
-`python scripts/verify.py --mode app` runs offline backend/frontend checks only and FAILS if the app is not scaffolded. Browser/live smoke checks are separate and explicitly reported. A build alone is not an end-to-end test.
+Layout (EMP-4): `backend/` (FastAPI package `emporio_assistant`, pytest, Ruff, pins in `pyproject.toml` + full set in `constraints.txt`) and `frontend/` (Vite React-TS, npm scripts dev/lint/typecheck/build, `package-lock.json`). One Python venv at the repo root: `.venv`.
+- Setup: `py -3.11 -m venv .venv`, then `.\.venv\Scripts\python.exe -m pip install -c backend\constraints.txt -e ".\backend[dev]"`; `npm ci` in `frontend/`.
+- Python dependency update: change pins in `backend/pyproject.toml`, recreate `.venv`, install without `-c`, run checks, regenerate `constraints.txt` with `pip freeze --exclude-editable` (keep its header).
+- Offline checks: `.\.venv\Scripts\python.exe scripts/verify.py --mode app` (runs the harness tests, Ruff and pytest with the same venv interpreter, then npm lint/typecheck/build). Run it with the venv Python, not the global one, or backend checks fail on missing packages. Set `$env:PYTHONDONTWRITEBYTECODE='1'` to avoid bytecode.
+- Harness only: `python scripts/verify.py --mode harness`.
+The verifier FAILS if the app is not scaffolded. Browser/live smoke checks are separate and explicitly reported. A build alone is not an end-to-end test. Don't create empty scripts to fake success.
+- Dev servers: API on `127.0.0.1:8000`, UI on `127.0.0.1:5173`; Vite proxies `/api` to the API (target in `frontend/vite.config.ts`), so the backend has no CORS middleware.
 
 ## Before marking ready for owner review
 - Selected acceptance criteria exercised; outputs checked, no invented PASS.
