@@ -28,7 +28,7 @@ After app scaffolding, adopt the simple defaults the included verifier expects: 
 - Say "ready for Matheus review"; do not represent owner approval or submission.
 
 ## Git and dependencies
-Matheus stages/commits/pushes. Suggest a message only. Never reset or discard user changes. No generated mass commit or force-push.
+Matheus stages/commits/pushes. Suggest a message and the exact paths to stage; never `git add .` blindly (original ZIPs and personal challenge data sit in the root). Never reset or discard user changes. No generated mass commit or force-push.
 Check license/maintenance before template reuse; adapt minimal patterns, not entire stacks. Use lockfiles and current compatible versions. No installs from random curl|shell commands. Dependencies need a reason, not a popularity claim.
 CI should run offline checks without model credentials. A small workflow is enough; third-party actions need immutable references or supported dependency locking. No deploy or paid benchmark on every push.
 
