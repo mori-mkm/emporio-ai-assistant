@@ -1,12 +1,21 @@
 # Session handoff
 
-## Current state (2026-11-01, Haiku pilot prepared; blocked on owner prerequisites)
-- Git: `main` at `28700c3` (EMP-9 + EMP-10 committed). Pilot-prep changes below are uncommitted; Matheus stages/commits.
-- Linear: no connector in the Claude session; proposed updates in the session report (EMP-9/10 evidence, EMP-13 pilot prep). No card to Done.
-- Implemented: chat UI, session API and single Haiku agent; simulated mode. The real Haiku path is tested ONLY with a fake client.
-- Live calls / spend: none. Real Haiku quality NOT validated.
-- Pilot authorized in two batches (DEV-001 ≤ US$0.05; six other smoke scenarios ≤ US$0.20) but not run: no live ledger at `data/budget/ledger.sqlite`; API access/billing and Claude Code billing mode not confirmed. Commands in `docs/evaluation.md` "First live pilot".
-- Owner pending: confirm API access/billing and Claude Code billing; `budget init --mode live` + `budget summary`; re-check prices; set the key in the PowerShell process; run batch 1, have it reviewed, then batch 2; the 10 reserved validation cases before final validation.
+## Current state (2026-11-01, pilot batch 1 run and reviewed; batch 2 not run)
+- Git: `main` at `7a1682e` (pilot reporting committed). This review only changed docs.
+- Linear: no connector in the Claude session; proposed EMP-9/EMP-13 evidence in the session report. No card to Done.
+- Implemented: chat UI, session API and single Haiku agent. Real Haiku path exercised on ONE scenario (DEV-001).
+- Live spend so far: US$0.006938 ledger cost (6 settled calls), no hold, no uncertain op. Real Haiku quality NOT validated beyond DEV-001.
+- DEV-001 verdict: integration and accounting pass; quality FAIL on the unsourced-attribute criterion; no critical failure.
+- Decision: the six remaining smoke scenarios run with the configuration unchanged, to observe the baseline.
+- Owner pending: run pilot batch 2 (command in `docs/evaluation.md`); the 10 reserved validation cases before final validation.
+
+## 2026-11-01 — pilot batch 1 (DEV-001) live run, reviewed offline
+- Run `20261101T213014Z-7b08a3` (owner ran it): live, commit `7a1682e` clean, `claude-haiku-5-5`, config `eb5104577eab`, generation `20261101T125243264432Z-10abfa`, `--max-model-calls 4`, cap US$0.05, 300 s.
+- Operational: 2/2 turns `answered`, 3 model calls each; tools turn 1 `search_products` x2, turn 2 `search_products` + `get_product` x4; turns 5.2 s and 7.9 s, run 13.4 s.
+- Accounting (pass): 6 ops settled with all usage categories reported (cache 0); 57 974 input + 2 275 output tokens; exact total before rounding US$0.0069349, ledger US$0.006938 (`pricing.cost_micro_usd` sums a call's categories and rounds up once per call); no reservation left, no hold. Ledger cost is not the invoice.
+- Quality (FAIL, unsourced attribute): DEV-001 forbids size claims absent from the catalog; turn 2 says "650 mm, que é tamanho padrão de adulto", adding a size classification the catalog does not have (the 650 mm scale itself is a catalog spec). Critical failure not observed: no out-of-stock or discontinued product recommended. Otherwise checked: turn 1 lists exactly the 12 expected available violões <= R$ 1.000,00 with exact prices; turn 2 recommends three nylon models from that set with correct catalog facts. Observation: static snapshot stock presented as current ("tenho 12 unidades no sistema").
+- Safety observable: no invented facts, actions or data requests; injection/off-topic not exercised. One scenario is not a validation of the agent.
+- Observed cost driver: no prompt caching, so each call re-sends the ~8k-token system prompt (input is 96% of tokens). Not changed during the pilot.
 
 ## 2026-11-01 — pilot preparation (run records), pilot not executed
 - Run records: `AssistantService.send` takes an optional `diagnostics` dict (runner only; the API never passes it) filled with turn status, model calls, tool names, dropped citations, ledger op ids and data generation; `ModelReply`/`TurnResult` carry the op ids. The runner keeps per-turn records (`turns[]` with status, text, duration) instead of flattening to text; a batch-stopping error is recorded with its public code (`BatchStopped`), with `not_run` listing skipped scenarios. The report adds the repository revision + dirty flag, generator/agent settings, data generations used, run duration and the ledger view of the run. `--max-run-seconds` is now checked before every turn (was: between scenarios).
@@ -15,7 +24,7 @@
 - Pre-pilot checks (offline): scenarios structure + references OK (92 checks) against active generation `20261101T125243264432Z-10abfa`; `anthropic` 2.3.0 installed; the only provider call site is `AnthropicGenerator.create` through `guarded_call`; `evals/results/` and `data/budget/` git-ignored; first-call prompt bound 24 328 tokens (reservation 12 631 µUSD), far below the 90 000 limit, so no refusal or truncation expected for the smoke scenarios; simulated dry run through the CLI (`--executor simulated --ids DEV-001,DEV-004`) wrote the new report shape; `--executor live` refused before building a client (missing confirmation flag; then missing ledger). Risk to watch in batch 1: if the API omits any cache usage field, settlement is refused and the ledger holds (conservative by design).
 
 ## 2026-11-01 — EMP-7 fix, EMP-9 Haiku agent + session API, EMP-10 chat UI
-- EMP-7 fix (reviewer repro on `021adc7`: `usage={}` settled at zero and released the reservation): settlement now requires every category in the price entry's `required_usage`; empty/incomplete usage -> `uncertain`, reservation kept, hold, turn/batch stops; explicit zero accepted; prompt tier (100k) enforced at reservation and settlement; per-run batch cap; owner `budget settle` CLI. Round-up to the micro-dollar kept and documented (may overstate < 1 µUSD per category per call).
+- EMP-7 fix (reviewer repro on `021adc7`: `usage={}` settled at zero and released the reservation): settlement now requires every category in the price entry's `required_usage`; empty/incomplete usage -> `uncertain`, reservation kept, hold, turn/batch stops; explicit zero accepted; prompt tier (100k) enforced at reservation and settlement; per-run batch cap; owner `budget settle` CLI. Round-up to the micro-dollar kept and documented (one round-up per call after summing categories; may overstate < 1 µUSD per call).
 - Prices: `config/pricing.json` `2026-11-01.1` - Haiku 5.5 only, ≤100k-token tier, sources and date in the file (official model overview + pricing pages checked 2026-11-01).
 - Files (backend): `anthropic_adapter.py`, `agent.py`, `assistant.py` (new); `main.py`, `runner.py`, `budget.py`, `pricing.py`, `pyproject.toml` (`anthropic==2.3.0`), `constraints.txt` (+7 pins: anthropic, docstring_parser, httpcore2, httpx2, jiter, sniffio, truststore); tests `test_agent.py`, `test_api.py` (new), `conftest.py`, `test_budget.py`, `test_runner.py`. Frontend: `src/App.tsx`, `src/api.ts`, `src/index.css`. Root: `.env.example`. Docs: README, architecture, development, evaluation, security, progress.
 - Design and limits: `docs/architecture.md` "Implemented flow (EMP-9/10)" and the code-vs-model controls table.
