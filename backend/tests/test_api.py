@@ -77,6 +77,9 @@ def test_simulated_conversation_is_labelled_and_uses_real_tools(client):
     cookie = created.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=strict" in cookie and "path=/api" in cookie
     body = send(client).json()
+    # public contract only: no model calls, tool names, op ids or data generation
+    assert set(body) == {"request_id", "status", "mode", "reply"}
+    assert set(body["reply"]) == {"text", "sources"}
     assert body["mode"] == "simulated" and body["status"] == "answered"
     assert body["reply"]["text"].startswith("[Resposta simulada")
     assert "3 categorias" in body["reply"]["text"]  # list_categories ran on the synthetic data

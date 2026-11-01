@@ -17,7 +17,7 @@ def test_smoke_run_is_labelled_simulated_and_ungraded(tmp_path):
     assert [s["id"] for s in report["scenarios"]] == load(DEFAULT_SCENARIOS)["smoke_suite"]
     for record in report["scenarios"]:
         assert record["turns_executed"] == record["turns_total"]
-        assert set(record["outputs"]) == {"[SIMULATED] No model was called."}
+        assert {t["text"] for t in record["turns"]} == {"[SIMULATED] No model was called."}
     # Expected answers are never copied into the run.
     assert "expect" not in json.dumps(report) and "must_not_claim" not in json.dumps(report)
 
@@ -48,7 +48,8 @@ def test_errors_are_recorded_and_budget_errors_stop_the_run(tmp_path):
         ("DEV-002", "RuntimeError"),
         ("DEV-003", "InsufficientBudget"),
     ]
-    assert report["stopped_early"] == "budget: InsufficientBudget"
+    assert report["stopped_early"] == "batch stopped: InsufficientBudget"
+    assert report["not_run"] == ["DEV-004"]
 
 
 def test_cli_rejects_unknown_ids(tmp_path, capsys):
@@ -71,9 +72,10 @@ def test_service_executor_runs_scenarios_through_the_api_service(generation_dir,
         )
     )
     assert report["simulated"] is True and report["executor"] == "assistant-service-simulated"
-    assert all(
-        o.startswith("[Resposta simulada") for s in report["scenarios"] for o in s["outputs"]
-    )
+    turns = [t for s in report["scenarios"] for t in s["turns"]]
+    assert all(t["text"].startswith("[Resposta simulada") for t in turns)
+    assert {t["status"] for t in turns} == {"answered"}
+    assert all(t["model_calls"] == 2 and t["tools_used"] == ["list_categories"] for t in turns)
     sessions = list(service.store._sessions.values())
     assert sorted(len(s.history) for s in sessions) == [4, 6]  # one session per scenario
     assert {s.run_id for s in sessions} == {run_id}
@@ -90,3 +92,90 @@ def test_live_pilot_requires_explicit_confirmation_and_a_small_cap(tmp_path, cap
         == 1
     )
     assert not list(tmp_path.iterdir())  # nothing ran
+
+
+def live_service(generation_dir, live_ledger, pricing, *script):
+    from conftest import FakeAnthropic
+
+    from emporio_assistant.anthropic_adapter import AnthropicGenerator
+    from emporio_assistant.assistant import AssistantService
+
+    generator = AnthropicGenerator(live_ledger, pricing, client=FakeAnthropic(*script))
+    return AssistantService(generator, generation_dir)
+
+
+def test_turn_status_is_recorded_not_flattened_to_text(
+    generation_dir, live_ledger, pricing, tmp_path
+):
+    from conftest import message, text
+
+    from emporio_assistant.runner import new_run_id, service_executor
+
+    service = live_service(
+        generation_dir,
+        live_ledger,
+        pricing,
+        text("Olá! Posso ajudar."),
+        message([{"type": "text", "text": "parcial"}], "max_tokens"),
+        message([], "end_turn"),
+    )
+    run_id = new_run_id(False)
+    report = load(
+        run(service_executor(service, run_id), ids=["DEV-020"], out_dir=tmp_path, run_id=run_id)
+    )
+    record = report["scenarios"][0]
+    assert [t["status"] for t in record["turns"]] == ["answered", "limit_reached", "incomplete"]
+    assert record["turns_executed"] == 3 and record["turns_answered"] == 1
+    assert report["simulated"] is False and report["configuration"]["agent"]["max_model_calls"]
+    # every turn links to its ledger operations; the run view shows usage and settled cost
+    op_ids = [op for t in record["turns"] for op in t["op_ids"]]
+    ledger = report["ledger"]
+    assert [o["op_id"] for o in ledger["operations"]] == op_ids
+    assert ledger["states"] == {"settled": 3} and ledger["open_holds"] == []
+    assert ledger["confirmed_micro_usd"] == 3 * 200 == ledger["committed_micro_usd"]
+    assert all(o["usage"]["input"] == 1000 for o in ledger["operations"])
+    assert "signature" not in json.dumps(report)  # no reasoning blocks in the report
+
+
+def test_provider_error_stops_the_batch_and_keeps_the_reservation(
+    generation_dir, live_ledger, pricing, tmp_path
+):
+    import anthropic
+    import httpx2
+
+    from emporio_assistant.runner import new_run_id, service_executor
+
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    busy = anthropic.RateLimitError(
+        "slow", response=httpx2.Response(429, request=request), body=None
+    )
+    service = live_service(generation_dir, live_ledger, pricing, busy)
+    run_id = new_run_id(False)
+    report = load(
+        run(
+            service_executor(service, run_id),
+            ids=["DEV-004", "DEV-001"],
+            out_dir=tmp_path,
+            run_id=run_id,
+        )
+    )
+    assert report["stopped_early"] == "batch stopped: provider_busy"
+    assert report["scenarios"][0]["turns"][0]["status"] == "error"
+    assert report["scenarios"][0]["error"] == "provider_busy"
+    assert report["not_run"] == ["DEV-001"]
+    ledger = report["ledger"]
+    assert ledger["states"] == {"uncertain": 1} and ledger["confirmed_micro_usd"] == 0
+    assert ledger["committed_micro_usd"] == ledger["operations"][0]["reserved_micro_usd"] > 0
+
+
+def test_no_turn_starts_after_the_run_deadline(tmp_path):
+    calls = []
+
+    def respond(scenario_id, history, user):
+        calls.append(scenario_id)
+        return "x"
+
+    executor = Executor("probe", True, None, None, "test", respond)
+    report = load(run(executor, ids=["DEV-001", "DEV-004"], out_dir=tmp_path, max_run_s=0))
+    assert calls == [] and report["stopped_early"] == "run time limit"
+    assert report["scenarios"] == [] and report["not_run"] == ["DEV-001", "DEV-004"]

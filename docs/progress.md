@@ -1,11 +1,18 @@
 # Session handoff
 
-## Current state (2026-11-01, EMP-7 fix + EMP-9 + EMP-10 ready for Matheus review)
-- Git: `main` at `021adc7` (EMP-7 + EMP-8 committed). This block is uncommitted; Matheus stages/commits.
-- Linear: no connector in the Claude session; proposed: comment on EMP-7 (usage-accounting fix), EMP-9 and EMP-10 In Review.
-- Implemented: chat UI, session API and single Haiku agent; simulated mode for offline use. The real Haiku path is tested ONLY with a fake client.
-- Live calls / spend: none. No live ledger created by Claude. Real Haiku test not run.
-- Owner pending: confirm credential and billing; `budget init --mode live`; re-check prices; authorize the pilot batch (`docs/evaluation.md` "First live pilot"); the 10 reserved validation cases before final validation.
+## Current state (2026-11-01, Haiku pilot prepared; blocked on owner prerequisites)
+- Git: `main` at `28700c3` (EMP-9 + EMP-10 committed). Pilot-prep changes below are uncommitted; Matheus stages/commits.
+- Linear: no connector in the Claude session; proposed updates in the session report (EMP-9/10 evidence, EMP-13 pilot prep). No card to Done.
+- Implemented: chat UI, session API and single Haiku agent; simulated mode. The real Haiku path is tested ONLY with a fake client.
+- Live calls / spend: none. Real Haiku quality NOT validated.
+- Pilot authorized in two batches (DEV-001 ≤ US$0.05; six other smoke scenarios ≤ US$0.20) but not run: no live ledger at `data/budget/ledger.sqlite`; API access/billing and Claude Code billing mode not confirmed. Commands in `docs/evaluation.md` "First live pilot".
+- Owner pending: confirm API access/billing and Claude Code billing; `budget init --mode live` + `budget summary`; re-check prices; set the key in the PowerShell process; run batch 1, have it reviewed, then batch 2; the 10 reserved validation cases before final validation.
+
+## 2026-11-01 — pilot preparation (run records), pilot not executed
+- Run records: `AssistantService.send` takes an optional `diagnostics` dict (runner only; the API never passes it) filled with turn status, model calls, tool names, dropped citations, ledger op ids and data generation; `ModelReply`/`TurnResult` carry the op ids. The runner keeps per-turn records (`turns[]` with status, text, duration) instead of flattening to text; a batch-stopping error is recorded with its public code (`BatchStopped`), with `not_run` listing skipped scenarios. The report adds the repository revision + dirty flag, generator/agent settings, data generations used, run duration and the ledger view of the run. `--max-run-seconds` is now checked before every turn (was: between scenarios).
+- Ledger: read-only `Ledger.run_report(run_id)` + CLI `budget run <run_id>`; accounting unchanged.
+- Tests (+3 runner, 1 API assertion): answered vs limit_reached vs incomplete kept per turn with op ids matching the ledger and settled cost; provider error stops the batch, keeps the reservation (`uncertain`) and lists `not_run`; no turn starts after the deadline; the public reply has only `request_id/status/mode/reply{text,sources}`.
+- Pre-pilot checks (offline): scenarios structure + references OK (92 checks) against active generation `20261101T125243264432Z-10abfa`; `anthropic` 2.3.0 installed; the only provider call site is `AnthropicGenerator.create` through `guarded_call`; `evals/results/` and `data/budget/` git-ignored; first-call prompt bound 24 328 tokens (reservation 12 631 µUSD), far below the 90 000 limit, so no refusal or truncation expected for the smoke scenarios; simulated dry run through the CLI (`--executor simulated --ids DEV-001,DEV-004`) wrote the new report shape; `--executor live` refused before building a client (missing confirmation flag; then missing ledger). Risk to watch in batch 1: if the API omits any cache usage field, settlement is refused and the ledger holds (conservative by design).
 
 ## 2026-11-01 — EMP-7 fix, EMP-9 Haiku agent + session API, EMP-10 chat UI
 - EMP-7 fix (reviewer repro on `021adc7`: `usage={}` settled at zero and released the reservation): settlement now requires every category in the price entry's `required_usage`; empty/incomplete usage -> `uncertain`, reservation kept, hold, turn/batch stops; explicit zero accepted; prompt tier (100k) enforced at reservation and settlement; per-run batch cap; owner `budget settle` CLI. Round-up to the micro-dollar kept and documented (may overstate < 1 µUSD per category per call).
@@ -124,7 +131,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews and commits the EMP-7 fix + EMP-9 + EMP-10. Then, only with his authorization: create the live ledger and run the smoke pilot (`docs/evaluation.md`). Luna/Qwen adapters and retrieval variants not started.
+Matheus reviews the pilot-prep changes, resolves the prerequisites, runs batch 1 (DEV-001) and shares the run id for review before batch 2. Luna/Qwen adapters, BM25 and embeddings not started.
 
 ## Update template
 - Date / EMP issue:

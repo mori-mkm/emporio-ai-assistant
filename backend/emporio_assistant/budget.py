@@ -369,6 +369,44 @@ class Ledger:
             "open_holds": holds,
         }
 
+    def run_report(self, run_id: str) -> dict:
+        """Read-only view of one run's operations (no accounting change)."""
+        try:
+            with closing(self._connect()) as connection:
+                rows = [
+                    dict(r)
+                    for r in connection.execute(
+                        "SELECT op_id, scenario_id, model, config_version, data_version, state, "
+                        "reserved_micro_usd, confirmed_micro_usd, usage_json, error_type, "
+                        "duration_ms, created_at FROM operations WHERE run_id = ? "
+                        "ORDER BY created_at, rowid",
+                        (run_id,),
+                    )
+                ]
+                holds = [
+                    dict(r)
+                    for r in connection.execute(
+                        "SELECT h.op_id, h.reason FROM holds h JOIN operations o USING (op_id) "
+                        "WHERE o.run_id = ? AND h.cleared_at IS NULL",
+                        (run_id,),
+                    )
+                ]
+                committed = connection.execute(COMMITTED_RUN_SQL, (run_id,)).fetchone()[0]
+        except sqlite3.Error:
+            raise LedgerUnavailable("budget ledger is unavailable") from None
+        for row in rows:
+            row["usage"] = json.loads(row.pop("usage_json") or "null")
+        return {
+            "run_id": run_id,
+            "operations": rows,
+            "states": {s: sum(r["state"] == s for r in rows) for s in {r["state"] for r in rows}},
+            "confirmed_micro_usd": sum(
+                r["confirmed_micro_usd"] or 0 for r in rows if r["state"] == "settled"
+            ),
+            "committed_micro_usd": committed,  # settled + still-held reservations
+            "open_holds": holds,
+        }
+
 
 def reservation_micro_usd(request: CallRequest, pricing: PriceTable) -> int:
     """Worst-case cost from the declared limits. Refuses missing or invalid limits."""
@@ -444,6 +482,8 @@ def main(argv: list[str] | None = None) -> int:
     init = commands.add_parser("init", help="create a new empty ledger (refuses to overwrite)")
     init.add_argument("--mode", choices=sorted(MODES), required=True)
     commands.add_parser("summary", help="print totals and open holds as JSON")
+    run = commands.add_parser("run", help="print one run's operations, usage and cost as JSON")
+    run.add_argument("run_id")
     settle = commands.add_parser(
         "settle", help="owner action: record usage confirmed in the provider console"
     )
@@ -460,6 +500,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"OK: created {args.mode} ledger")
         elif args.command == "summary":
             print(json.dumps(Ledger(args.ledger).summary(), indent=2))
+        elif args.command == "run":
+            print(json.dumps(Ledger(args.ledger).run_report(args.run_id), indent=2))
         elif args.command == "settle":
             from .pricing import DEFAULT_PATH as PRICING_PATH
             from .pricing import load_price_table

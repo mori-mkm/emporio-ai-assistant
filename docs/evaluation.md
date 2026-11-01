@@ -75,13 +75,30 @@ Current harness does NOT grant paid execution. Owner must confirm Claude Code au
 - **Scope:** controls only application paths that call `guarded_call`. It does not see or stop other spending on the provider accounts, nor Claude Code's own billing. Time to first useful text is not measured until real streaming exists.
 - **Runner:** `emporio_assistant.runner` drives scenario turns (all, `--ids`, `--smoke`) with per-scenario history and writes `evals/results/<run_id>.json` (git-ignored, no expected answers, `graded: false`). Executors: `placeholder` (default, labelled SIMULATED), `simulated` (the real API service path with the scripted provider, also SIMULATED) and `live` (the same `AssistantService` path as the chat API, one new session per scenario). A budget error, hold, uncertain usage or provider error stops the run; a run-time limit is checked between scenarios.
 
-### First live pilot (prepared, NOT run)
-Requires Matheus to confirm the credential and billing and to authorize this batch. Prerequisites: API key in the PowerShell process (README), `budget init --mode live` done by Matheus (`data/budget/ledger.sqlite`), no open hold (`budget summary`), `config/pricing.json` prices re-checked on the official pages.
+### First live pilot (authorized 2026-11-01 in two batches; NOT run yet)
+Scope authorized by Matheus: batch 1 = DEV-001 only, cap US$0.05; batch 2 = DEV-004, DEV-010, DEV-013, DEV-020, DEV-025, DEV-026, cap US$0.20 (total US$0.25 inside the US$7 development budget). One execution per scenario, sequential, no retry, no paid judge, no manual live chat during the pilot, no config/prompt change between batches. Batch 2 runs only if batch 1 executed and settled cleanly (no hold, no uncertain operation) and its answers show no critical failure.
+
+Blocked on 2026-11-01 because human prerequisites were not met: no live ledger existed at `data/budget/ledger.sqlite`, and API access/billing and the Claude Code billing mode were not confirmed. No real call was made.
+
+Prerequisites (owner): API key set in the PowerShell process that runs the batch (README snippet, never pasted in chat); Anthropic API access and billing active (a Claude subscription does not include API credit); Claude Code billing identified separately from the application; live ledger created by the owner with `budget init --mode live` (once; refuses to overwrite) and checked with `budget summary` (mode live, no open hold, no uncertain operation); `config/pricing.json` prices re-checked on the official pages.
+
+Commands (from `backend/`):
 ```powershell
-Set-Location backend
-..\.venv\Scripts\python.exe -m emporio_assistant.runner --smoke --executor live --confirm-paid-run --batch-cap-usd 0.25 --max-model-calls 4 --max-run-seconds 900
+..\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-001 --executor live --confirm-paid-run --batch-cap-usd 0.05 --max-model-calls 4 --max-run-seconds 300
+..\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
+..\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-004,DEV-010,DEV-013,DEV-020,DEV-025,DEV-026 --executor live --confirm-paid-run --batch-cap-usd 0.20 --max-model-calls 4 --max-run-seconds 1200
 ```
-The smoke suite (7 development scenarios) runs once, sequentially, inside the US$7 development budget. Each call reserves its worst case before dispatch: prompt bound x (0.10 + 0.125 + 0.20 + 0.01) USD/M across the four prompt categories plus 4 096 x 0.50 USD/M; at the 90 000-token bound that is about US$0.041 (the real first-call bound is the manual + tools + message size, much lower). Settling real usage frees the unused part. A call whose reservation would push the run's committed total (settled + held) above US$0.25 is refused before dispatch, so the run may stop before all 7 scenarios. The run stops on cap, hold, uncertain usage, provider error or time limit. The output is a raw run report for human grading; it is not a quality result until graded.
+Each call reserves its worst case before dispatch: prompt bound x (0.10 + 0.125 + 0.20 + 0.01) USD/M across the four prompt categories plus 4 096 x 0.50 USD/M. Measured offline on generation `20261101T125243264432Z-10abfa`: the first-call bound is 24 328 tokens (the system prompt with the full manual is 16 832 characters), a reservation of 12 631 µUSD; a fourth call after three tool rounds stays near 40k tokens (19 281 µUSD); the 90 000-token limit would reserve 41 198 µUSD. A call whose reservation would push the run's committed total (settled + held) above the batch cap is refused before dispatch. Each batch cap is enforced per run id; the two-batch total relies on running each batch once.
+
+**Time limit:** `--max-run-seconds` is checked before every turn, so no new turn (and no new paid call) starts after it. A turn already running is bounded by the agent's turn limit (90 s), so a run can end up to ~90 s after the deadline.
+
+**Run report (`evals/results/<run_id>.json`, git-ignored):** run id, repository revision and whether the working tree differed from it, executor, model, `config_version`, generator and agent settings, scenario contract and data versions, data generations actually used; per turn: `status` (`answered`, `limit_reached`, `refused`, `incomplete` or `error`), observed text, duration, model calls, tool names, dropped citations and ledger op ids; per scenario: turns executed/answered, error code; per run: `stopped_early`, `not_run`, duration, and the ledger view of the run (operations with state, reported usage, reserved and confirmed µUSD, open holds, committed total). A fixed limit message keeps its non-answered status and is never counted as a completed answer. No reasoning blocks, credentials or prompts are written. These diagnostics never appear in the public API reply.
+
+**Ledger cost is not the invoice:** costs come from the usage the API reported, rounded up to the micro-dollar per category, so they can slightly exceed the provider charge; the provider console is the billing record.
+
+**On a hold, uncertain usage or provider error:** the batch stops, the reservation stays and the report lists the op ids (`budget run <run_id>`). No retry, no zero-usage settlement, no automatic `clear-hold`.
+
+**Review:** the human assessment goes in a separate file next to the raw report (`evals/results/<run_id>.review.md`) with four separate parts: operational execution, answer quality against the scenario criteria, safety/scope, cost and duration. Verdict per scenario: pass on the checked criteria / fail with the specific fact or rule / inconclusive with the missing evidence / not run. The raw report is never edited. No time-to-first-token (no streaming) and no percentiles from seven conversations.
 
 ## Evidence storage
 Sanitize logs; don't export secrets, customer PII or reserved-case answers. Save development reports with real measurements, model-config metadata and trace IDs where appropriate. A mock/demo report must visibly say SIMULATED. Never reconstruct supposedly observed tool results from the expected labels.

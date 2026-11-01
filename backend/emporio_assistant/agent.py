@@ -52,6 +52,7 @@ class TurnResult:
     model_calls: int = 0
     tools_used: list[str] = field(default_factory=list)
     dropped_citations: int = 0
+    op_ids: list[str] = field(default_factory=list)
 
 
 INSTRUCTIONS = """\
@@ -188,10 +189,12 @@ class Agent:
         messages = [*history, {"role": "user", "content": user_text}]
         context = replace(context, config_version=self.version, data_version=snapshot.id)
         deadline = time.monotonic() + cfg.turn_timeout_s
-        calls, used, seen = 0, [], set()
+        calls, used, seen, ops = 0, [], set(), []
 
         def stop(status: str, reason: str) -> TurnResult:
-            return TurnResult(status, PUBLIC_MESSAGES[reason], model_calls=calls, tools_used=used)
+            return TurnResult(
+                status, PUBLIC_MESSAGES[reason], model_calls=calls, tools_used=used, op_ids=ops
+            )
 
         while True:
             if calls >= cfg.max_model_calls:
@@ -206,6 +209,8 @@ class Agent:
                 context=replace(context, timeout_s=remaining),
             )
             calls += 1
+            if reply.op_id:
+                ops.append(reply.op_id)
             tool_uses = [b for b in reply.content if b.get("type") == "tool_use"]
 
             if reply.stop_reason == "tool_use" and tool_uses:
@@ -247,7 +252,7 @@ class Agent:
                 body, sources, dropped = extract_sources(text, snapshot)
                 if not body:
                     return stop("incomplete", "incomplete")
-                return TurnResult("answered", body, sources, calls, used, dropped)
+                return TurnResult("answered", body, sources, calls, used, dropped, ops)
             if reply.stop_reason == "refusal":
                 return stop("refused", "refused")
             if reply.stop_reason in ("max_tokens", "model_context_window_exceeded"):

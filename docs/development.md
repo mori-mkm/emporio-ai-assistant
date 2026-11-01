@@ -29,7 +29,8 @@ The verifier FAILS if the app is not scaffolded. Browser/live smoke checks are s
 - Chat (EMP-9/10): set `EMPORIO_ASSISTANT_MODE` (`simulated` offline, `live` paid; unset = chat disabled) in the API's PowerShell window, then start uvicorn with ONE worker. Variables are listed in `.env.example`; the backend reads the process environment only. Live mode also needs the API key in that process (see README for a no-echo PowerShell snippet), `config/pricing.json` with verified prices and an existing live ledger.
 - Interactive browser check (local, `.local/chat-check.mjs`, not versioned): `node .local/chat-check.mjs` from the repo root starts uvicorn (simulated), Vite and headless Edge, drives real keyboard/mouse input over the DevTools Protocol and prints PASS/FAIL per step. It needs ports 8000, 5173 and 9333 free.
 - Budget settle (owner): `... budget settle <op_id> --usage '{"input": 1200, "output": 300, "cache_write_5m": 0, "cache_write_1h": 0, "cache_read": 0}'` records usage confirmed in the provider console for an `uncertain` operation; incomplete usage is refused.
-- Pilot (EMP-9 prep, NOT run; needs Matheus' authorization): see `docs/evaluation.md` "First live pilot".
+- Ledger view of one run (read-only): `... budget run <run_id>` prints that run's operations, reported usage, reserved/confirmed µUSD and open holds.
+- Pilot (two authorized batches, NOT run yet): see `docs/evaluation.md` "First live pilot".
 
 ## Before marking ready for owner review
 - Selected acceptance criteria exercised; outputs checked, no invented PASS.

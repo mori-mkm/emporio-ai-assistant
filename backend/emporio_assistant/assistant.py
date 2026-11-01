@@ -212,8 +212,15 @@ class AssistantService:
             ) from None
 
     def send(
-        self, session_id: str | None, text: str, request_id: str, scenario_id: str | None = None
+        self,
+        session_id: str | None,
+        text: str,
+        request_id: str,
+        scenario_id: str | None = None,
+        diagnostics: dict | None = None,
     ) -> dict:
+        """Public reply only. `diagnostics` (runner use; the API never passes it) receives the
+        turn status, model calls, tools and ledger op ids, which never enter the public reply."""
         session = self.store.get(session_id)
         if not session.lock.acquire(blocking=False):
             raise PublicError(
@@ -226,7 +233,7 @@ class AssistantService:
                     raise cached
                 return cached
             try:
-                reply = self._turn(session, text, request_id, scenario_id)
+                reply = self._turn(session, text, request_id, scenario_id, diagnostics)
             except PublicError as error:
                 if error.code not in ("session_busy", "data_changed"):
                     self._remember(session, request_id, error)
@@ -242,7 +249,14 @@ class AssistantService:
         while len(session.replies) > 20:
             session.replies.popitem(last=False)
 
-    def _turn(self, session: Session, text: str, request_id: str, scenario_id: str | None) -> dict:
+    def _turn(
+        self,
+        session: Session,
+        text: str,
+        request_id: str,
+        scenario_id: str | None,
+        diagnostics: dict | None = None,
+    ) -> dict:
         with self._snapshot() as snapshot:
             if snapshot.id != session.generation_id:
                 self.store.drop(session.id)
@@ -271,6 +285,15 @@ class AssistantService:
             except BudgetError as error:
                 log.warning("budget refused the call: %s", error)
                 raise _unavailable() from None
+        if diagnostics is not None:
+            diagnostics.update(
+                status=result.status,
+                model_calls=result.model_calls,
+                tools_used=list(result.tools_used),
+                dropped_citations=result.dropped_citations,
+                op_ids=list(result.op_ids),
+                data_generation=snapshot.id,
+            )
         if result.status == "answered":
             session.history += [
                 {"role": "user", "content": text},

@@ -9,9 +9,10 @@ from __future__ import annotations
 import argparse
 import json
 import secrets
+import subprocess
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -23,8 +24,17 @@ REPO = Path(__file__).resolve().parents[2]
 DEFAULT_SCENARIOS = REPO / "evals" / "development_scenarios.json"
 DEFAULT_OUT = REPO / "evals" / "results"  # git-ignored
 
-# (scenario_id, history, user_message) -> assistant text. History is per scenario only.
-Respond = Callable[[str, list[dict], str], str]
+# (scenario_id, history, user_message) -> assistant text, or a dict with "text" plus turn
+# diagnostics (status, model_calls, tools_used, op_ids). History is per scenario only.
+Respond = Callable[[str, list[dict], str], str | dict]
+
+
+class BatchStopped(BudgetError):
+    """A failure that must stop the batch (budget, hold, uncertain usage, provider error)."""
+
+    def __init__(self, code: str):
+        super().__init__(code)
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -35,6 +45,8 @@ class Executor:
     model: str | None
     config_version: str
     respond: Respond
+    configuration: dict | None = None  # agent + model settings recorded in the report
+    ledger_report: Callable[[str], dict] | None = None  # run_id -> ledger view after the run
 
 
 def new_run_id(simulated: bool) -> str:
@@ -49,18 +61,23 @@ def service_executor(service, run_id: str) -> Executor:
 
     sessions: dict[str, str] = {}
 
-    def respond(scenario_id: str, _history: list[dict], user: str) -> str:
+    def respond(scenario_id: str, _history: list[dict], user: str) -> dict:
         if scenario_id not in sessions:
             sessions[scenario_id] = service.start_session(run_id=run_id).id
+        diagnostics: dict = {}
         try:
-            reply = service.send(sessions[scenario_id], user, secrets.token_hex(8), scenario_id)
+            reply = service.send(
+                sessions[scenario_id], user, secrets.token_hex(8), scenario_id, diagnostics
+            )
         except PublicError as error:
             if error.stops_batch:
-                raise BudgetError(error.code) from None
+                raise BatchStopped(error.code) from None
             raise
-        return reply["reply"]["text"]
+        return {"text": reply["reply"]["text"], **diagnostics}
 
-    describe = getattr(service.agent.generator, "describe", dict)()
+    generator = service.agent.generator
+    describe = getattr(generator, "describe", dict)()
+    ledger = getattr(generator, "ledger", None)
     return Executor(
         name=f"assistant-service-{service.mode}",
         simulated=service.mode != "live",
@@ -68,6 +85,8 @@ def service_executor(service, run_id: str) -> Executor:
         model=describe.get("model"),
         config_version=service.agent.version,
         respond=respond,
+        configuration={"generator": describe, "agent": asdict(service.agent.config)},
+        ledger_report=ledger.run_report if ledger is not None else None,
     )
 
 
@@ -110,35 +129,49 @@ def run(
     run_id = run_id or new_run_id(executor.simulated)
     run_started = time.monotonic()
 
+    deadline = None if max_run_s is None else run_started + max_run_s
+
     records = []
     stopped = None
     for scenario in chosen:
-        if max_run_s is not None and time.monotonic() - run_started > max_run_s:
-            stopped = "run time limit"
-            break
         history: list[dict] = []  # fresh per scenario: no state crosses scenarios
-        record = {"id": scenario["id"], "turns_total": len(scenario["turns"]), "outputs": []}
+        record = {"id": scenario["id"], "turns_total": len(scenario["turns"]), "turns": []}
         begin = time.monotonic()
-        try:
-            for turn in scenario["turns"]:
-                text = executor.respond(scenario["id"], list(history), turn["user"])
-                history += [
-                    {"role": "user", "content": turn["user"]},
-                    {"role": "assistant", "content": text},
-                ]
-                record["outputs"].append(text)
-            record["error"] = None
-        except BudgetError as error:
-            record["error"] = type(error).__name__
-            stopped = f"budget: {type(error).__name__}"
-        except Exception as error:  # recorded per scenario; the run continues
-            record["error"] = getattr(error, "code", type(error).__name__)
-        record["turns_executed"] = len(record["outputs"])
-        record["duration_ms"] = round((time.monotonic() - begin) * 1000)
-        records.append(record)
+        record["error"] = None
+        for turn in scenario["turns"]:
+            # Checked before every turn: no new turn (or paid call) starts after the deadline.
+            # A turn already running is bounded by the agent's own turn limit instead.
+            if deadline is not None and time.monotonic() >= deadline:
+                stopped = "run time limit"
+                break
+            turn_start = time.monotonic()
+            try:
+                out = executor.respond(scenario["id"], list(history), turn["user"])
+            except BudgetError as error:
+                record["error"] = getattr(error, "code", type(error).__name__)
+                stopped = f"batch stopped: {record['error']}"
+            except Exception as error:  # recorded per scenario; the run continues
+                record["error"] = getattr(error, "code", type(error).__name__)
+            if record["error"]:
+                record["turns"].append(
+                    {"status": "error", "error": record["error"], "duration_ms": _ms(turn_start)}
+                )
+                break
+            out = out if isinstance(out, dict) else {"text": out, "status": None}
+            record["turns"].append({**out, "duration_ms": _ms(turn_start)})
+            history += [
+                {"role": "user", "content": turn["user"]},
+                {"role": "assistant", "content": out["text"]},
+            ]
+        record["turns_executed"] = sum(t["status"] != "error" for t in record["turns"])
+        record["turns_answered"] = sum(t["status"] == "answered" for t in record["turns"])
+        record["duration_ms"] = _ms(begin)
+        if record["turns"] or not stopped:
+            records.append(record)
         if stopped:
             break
 
+    not_run = [s["id"] for s in chosen if s["id"] not in {r["id"] for r in records}]
     report = {
         "run_id": run_id,
         "simulated": executor.simulated,
@@ -152,17 +185,50 @@ def run(
         "provider": executor.provider,
         "model": executor.model,
         "config_version": executor.config_version,
+        "configuration": executor.configuration,
+        "git": _git_state(),
         "scenario_contract_version": data["contract_version"],
-        "data_version": data["data_version"],
+        "data_version": data["data_version"],  # scenarios were written against this data
+        "data_generations": sorted(
+            {t["data_generation"] for r in records for t in r["turns"] if t.get("data_generation")}
+        ),  # what the turns actually used
         "selection": "smoke" if smoke else (ids or "all"),
         "started_at": started_at.isoformat(timespec="seconds"),
         "stopped_early": stopped,
+        "max_run_seconds": max_run_s,
+        "duration_ms": _ms(run_started),
         "scenarios": records,
+        "not_run": not_run,
     }
+    if executor.ledger_report is not None:
+        try:
+            report["ledger"] = executor.ledger_report(run_id)
+        except BudgetError as error:
+            report["ledger"] = {"error": str(error)}
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{run_id}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _ms(start: float) -> int:
+    return round((time.monotonic() - start) * 1000)
+
+
+def _git_state() -> dict:
+    """Commit and whether tracked/untracked files differ from it (paths are not recorded)."""
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, timeout=10
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=REPO, capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"commit": None, "dirty": None}
+    if head.returncode or status.returncode:
+        return {"commit": None, "dirty": None}
+    return {"commit": head.stdout.strip(), "dirty": bool(status.stdout.strip())}
 
 
 PILOT_CAP_USD = Decimal("0.25")  # hard ceiling for a smoke pilot batch
@@ -185,7 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confirm-paid-run", action="store_true")
     parser.add_argument("--batch-cap-usd", type=Decimal, default=None)
     parser.add_argument("--max-model-calls", type=int, default=4, help="per turn (1-5)")
-    parser.add_argument("--max-run-seconds", type=float, default=900.0)
+    parser.add_argument(
+        "--max-run-seconds",
+        type=float,
+        default=900.0,
+        help="no new turn starts after this; a running turn stops at the agent's turn limit",
+    )
     args = parser.parse_args(argv)
     ids = args.ids.split(",") if args.ids else None
     try:

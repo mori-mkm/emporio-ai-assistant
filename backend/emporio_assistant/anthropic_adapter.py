@@ -59,6 +59,7 @@ class CallContext:
 class ModelReply:
     content: list[dict]  # blocks as plain dicts, passed back unchanged within a tool loop
     stop_reason: str | None
+    op_id: str | None = None  # ledger operation, for run reports only
 
 
 def prompt_token_bound(
@@ -235,4 +236,4 @@ class AnthropicGenerator:
 
         message = guarded_call(self.ledger, self.pricing, request, call).value
         content = [block.model_dump(mode="json", exclude_none=True) for block in message.content]
-        return ModelReply(content, message.stop_reason)
+        return ModelReply(content, message.stop_reason, request.op_id)
