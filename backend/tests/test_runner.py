@@ -179,3 +179,124 @@ def test_no_turn_starts_after_the_run_deadline(tmp_path):
     report = load(run(executor, ids=["DEV-001", "DEV-004"], out_dir=tmp_path, max_run_s=0))
     assert calls == [] and report["stopped_early"] == "run time limit"
     assert report["scenarios"] == [] and report["not_run"] == ["DEV-001", "DEV-004"]
+
+
+def traced_run(generation_dir, live_ledger, pricing, tmp_path, *script, trace=True, ids=None):
+    from emporio_assistant.runner import new_run_id, service_executor
+
+    service = live_service(generation_dir, live_ledger, pricing, *script)
+    run_id = new_run_id(False)
+    executor = service_executor(service, run_id, trace=trace)
+    return load(run(executor, ids=ids or ["DEV-026"], out_dir=tmp_path, run_id=run_id))
+
+
+def test_trace_records_what_ran_in_order_with_sources_and_dropped_citations(
+    generation_dir, live_ledger, pricing, tmp_path
+):
+    from conftest import text, tool_use
+
+    from emporio_assistant.tools import CatalogSnapshot, call_tool
+
+    report = traced_run(
+        generation_dir,
+        live_ledger,
+        pricing,
+        tmp_path,
+        tool_use(("get_product", {"product_id": 1001}), ("quote_price", {"product_id": "x9z"})),
+        text("Custa R$ 1.049,33.\n[fontes: 2, 99.9]"),
+    )
+    assert report["report_format"] == 2 and report["trace_enabled"] is True
+    turn = report["scenarios"][0]["turns"][0]
+    assert [s["section"] for s in turn["sources"]] == ["2"]
+    assert turn["dropped_citations"] == 1 and turn["dropped_sections"] == ["99.9"]
+    steps = turn["trace"]
+    assert [(s["step"], s.get("name")) for s in steps] == [
+        ("model", None),
+        ("tool", "get_product"),
+        ("tool", "quote_price"),
+        ("model", None),
+    ]
+    assert [s["op_id"] for s in steps if s["step"] == "model"] == turn["op_ids"]
+    assert [o["op_id"] for o in report["ledger"]["operations"]] == turn["op_ids"]
+    assert [s["stop"] for s in steps if s["step"] == "model"] == ["tool_use", "end_turn"]
+    good, bad = steps[1], steps[2]
+    with CatalogSnapshot(generation_dir) as snapshot:  # the same tool, same arguments
+        assert good["result"] == call_tool(snapshot, "get_product", {"product_id": 1001})
+    assert good["arguments"] == {"product_id": 1001} and good["tool_use_id"].startswith("toolu_")
+    assert good["ok"] is True and good["truncated"] is False and good["call"] == 1
+    # the rejected call keeps its place, with sanitized error metadata and no copied input
+    assert bad["ok"] is False and bad["arguments"] is None
+    assert bad["error"]["code"] == "invalid_arguments" and "x9z" not in json.dumps(bad)
+    assert turn["trace_complete"] is True
+    blob = json.dumps(report, ensure_ascii=False)
+    assert "signature" not in blob and "Trust boundary" not in blob and "store_manual" not in blob
+
+
+def test_trace_is_off_unless_the_runner_enables_it(generation_dir, live_ledger, pricing, tmp_path):
+    from conftest import text
+
+    report = traced_run(
+        generation_dir, live_ledger, pricing, tmp_path, text("Olá. [fontes: 2]"), trace=False
+    )
+    turn = report["scenarios"][0]["turns"][0]
+    assert report["trace_enabled"] is False
+    assert "trace" not in turn and "trace_complete" not in turn
+    assert [s["section"] for s in turn["sources"]] == ["2"]  # part of the public reply anyway
+
+
+def test_oversized_trace_values_are_cut_and_flagged(
+    generation_dir, live_ledger, pricing, tmp_path, monkeypatch
+):
+    from conftest import text, tool_use
+
+    from emporio_assistant import agent
+
+    monkeypatch.setattr(agent, "TRACE_LIMIT_CHARS", 50)
+    report = traced_run(
+        generation_dir,
+        live_ledger,
+        pricing,
+        tmp_path,
+        tool_use(("get_product", {"product_id": 1001})),
+        text("Pronto."),
+    )
+    turn = report["scenarios"][0]["turns"][0]
+    step = turn["trace"][1]
+    assert step["truncated"] is True and isinstance(step["result"], str)
+    assert len(step["result"]) == 50 and turn["trace_complete"] is False
+
+
+def test_a_failed_turn_keeps_the_steps_before_the_failure(
+    generation_dir, live_ledger, pricing, tmp_path
+):
+    import anthropic
+    import httpx2
+    from conftest import tool_use
+
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    busy = anthropic.RateLimitError(
+        "slow", response=httpx2.Response(429, request=request), body=None
+    )
+    report = traced_run(
+        generation_dir,
+        live_ledger,
+        pricing,
+        tmp_path,
+        tool_use(("get_product", {"product_id": 1001})),
+        busy,
+        ids=["DEV-026", "DEV-001"],
+    )
+    turn = report["scenarios"][0]["turns"][0]
+    assert turn["status"] == "error" and turn["error"] == "provider_busy"
+    assert [s["step"] for s in turn["trace"]] == ["model", "tool"]
+    assert turn["trace_complete"] is False and report["not_run"] == ["DEV-001"]
+
+
+def test_old_reports_mark_missing_evidence_instead_of_inventing_it():
+    from emporio_assistant.runner import NOT_RECORDED, turn_evidence
+
+    old = {"text": "Oi", "status": "answered", "tools_used": ["search_products"], "op_ids": ["a"]}
+    evidence = turn_evidence(old)
+    assert evidence["text"] == "Oi" and evidence["tools_used"] == ["search_products"]
+    assert evidence["sources"] == evidence["trace"] == evidence["dropped_sections"] == NOT_RECORDED
+    assert turn_evidence({"text": "Oi"})["status"] == NOT_RECORDED

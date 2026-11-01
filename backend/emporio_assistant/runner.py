@@ -47,6 +47,20 @@ class Executor:
     respond: Respond
     configuration: dict | None = None  # agent + model settings recorded in the report
     ledger_report: Callable[[str], dict] | None = None  # run_id -> ledger view after the run
+    trace: bool = False  # per-turn model/tool steps recorded
+
+
+REPORT_FORMAT = 2  # 1 = no format field: no sources, dropped ids or trace per turn
+NOT_RECORDED = "not_recorded"
+EVIDENCE_FIELDS = (
+    "status", "text", "sources", "dropped_citations", "dropped_sections", "tools_used",
+    "op_ids", "data_generation", "trace", "trace_complete",
+)  # fmt: skip
+
+
+def turn_evidence(turn: dict) -> dict:
+    """A turn record of any report format, with absent fields marked, never filled in."""
+    return {name: turn.get(name, NOT_RECORDED) for name in EVIDENCE_FIELDS}
 
 
 def new_run_id(simulated: bool) -> str:
@@ -54,9 +68,10 @@ def new_run_id(simulated: bool) -> str:
     return run_id + ("-simulated" if simulated else "")
 
 
-def service_executor(service, run_id: str) -> Executor:
+def service_executor(service, run_id: str, trace: bool = False) -> Executor:
     """Scenarios through AssistantService: the same sessions, agent, tools and budget path as
-    the API. One fresh session per scenario; provider/budget failures stop the whole run."""
+    the API. One fresh session per scenario; provider/budget failures stop the whole run.
+    `trace` records the ordered model/tool steps of each turn (development evaluation only)."""
     from .assistant import PublicError
 
     sessions: dict[str, str] = {}
@@ -67,12 +82,17 @@ def service_executor(service, run_id: str) -> Executor:
         diagnostics: dict = {}
         try:
             reply = service.send(
-                sessions[scenario_id], user, secrets.token_hex(8), scenario_id, diagnostics
+                sessions[scenario_id], user, secrets.token_hex(8), scenario_id, diagnostics, trace
             )
         except PublicError as error:
-            if error.stops_batch:
-                raise BatchStopped(error.code) from None
-            raise
+            failure = BatchStopped(error.code) if error.stops_batch else error
+            if "trace" in diagnostics:  # steps up to the failure, in order; never complete
+                failure.partial = {"trace": diagnostics["trace"], "trace_complete": False}
+            raise failure from None
+        if "trace" in diagnostics:
+            diagnostics["trace_complete"] = not any(
+                s.get("truncated") for s in diagnostics["trace"]
+            )
         return {"text": reply["reply"]["text"], **diagnostics}
 
     generator = service.agent.generator
@@ -87,6 +107,7 @@ def service_executor(service, run_id: str) -> Executor:
         respond=respond,
         configuration={"generator": describe, "agent": asdict(service.agent.config)},
         ledger_report=ledger.run_report if ledger is not None else None,
+        trace=trace,
     )
 
 
@@ -145,16 +166,24 @@ def run(
                 stopped = "run time limit"
                 break
             turn_start = time.monotonic()
+            partial: dict = {}  # trace steps recorded before a failure, if any
             try:
                 out = executor.respond(scenario["id"], list(history), turn["user"])
             except BudgetError as error:
                 record["error"] = getattr(error, "code", type(error).__name__)
+                partial = getattr(error, "partial", {})
                 stopped = f"batch stopped: {record['error']}"
             except Exception as error:  # recorded per scenario; the run continues
                 record["error"] = getattr(error, "code", type(error).__name__)
+                partial = getattr(error, "partial", {})
             if record["error"]:
                 record["turns"].append(
-                    {"status": "error", "error": record["error"], "duration_ms": _ms(turn_start)}
+                    {
+                        "status": "error",
+                        "error": record["error"],
+                        **partial,
+                        "duration_ms": _ms(turn_start),
+                    }
                 )
                 break
             out = out if isinstance(out, dict) else {"text": out, "status": None}
@@ -173,8 +202,10 @@ def run(
 
     not_run = [s["id"] for s in chosen if s["id"] not in {r["id"] for r in records}]
     report = {
+        "report_format": REPORT_FORMAT,
         "run_id": run_id,
         "simulated": executor.simulated,
+        "trace_enabled": executor.trace,
         "notice": (
             "SIMULATED run: no model was called; outputs are placeholders, not agent answers."
             if executor.simulated
@@ -249,6 +280,11 @@ def main(argv: list[str] | None = None) -> int:
         "live: real Claude calls (paid, needs --confirm-paid-run)",
     )
     parser.add_argument("--confirm-paid-run", action="store_true")
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="record each turn's model/tool steps (validated arguments, public tool results)",
+    )
     parser.add_argument("--batch-cap-usd", type=Decimal, default=None)
     parser.add_argument("--max-model-calls", type=int, default=4, help="per turn (1-5)")
     parser.add_argument(
@@ -308,7 +344,7 @@ def _service_executor(args) -> tuple[Executor, str]:
     except AdapterConfigError as error:
         raise ValueError(str(error)) from None
     run_id = new_run_id(not live)
-    return service_executor(service, run_id), run_id
+    return service_executor(service, run_id, trace=args.trace), run_id
 
 
 if __name__ == "__main__":

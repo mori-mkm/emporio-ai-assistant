@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Protocol
 
 from .anthropic_adapter import CallContext, ModelReply
-from .tools import CatalogSnapshot, call_tool, tool_schemas
+from .tools import CatalogSnapshot, call_tool, tool_schemas, validated_arguments
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,7 @@ class TurnResult:
     tools_used: list[str] = field(default_factory=list)
     dropped_citations: int = 0
     op_ids: list[str] = field(default_factory=list)
+    dropped_sections: list[str] = field(default_factory=list)  # first 10, see extract_sources
 
 
 INSTRUCTIONS = """\
@@ -75,6 +76,15 @@ not check it now; do not guess.
 - search_products returns candidates: words also match descriptions and specs. Before \
 recommending a product as a given type (e.g. soprano ukulele), check its name/specs; do not \
 present a product that only mentions the word as that type.
+- Product attributes: state only what the name, description or specs say. Do not turn a \
+measurement into a claim about body size, age suitability or certification. If the data does \
+not settle the customer's need, say what is known, still suggest options from it, and ask one \
+short question.
+- Alternatives: prefer comparable characteristics and price range, within any budget the \
+customer gave; ask for budget or preference when it matters. If you show a clearly pricier \
+option, say it is in a higher price range.
+- Stock comes from the store's catalog records, not live inventory: say briefly that a product \
+is available in the catalog; never say it is available right now or that you checked live stock.
 - availability: available = may be offered (data snapshot, not live inventory); out_of_stock = \
 temporarily unavailable, suggest available alternatives; discontinued = no longer in the \
 catalog, do not confirm an immediate purchase; coming_soon = not available yet, no launch date \
@@ -85,10 +95,13 @@ explain what is certain and say the rest must be confirmed with the store.
 - Installments: supported = offer it; not_supported = it is not available; \
 needs_confirmation = the manual's two rules disagree, so do not promise it.
 - Store policies (returns, exchanges, warranty, shipping, hours, contacts) come from the \
-manual below; answer them directly when the manual is clear. Where it is silent or \
-contradictory, say so instead of choosing: the manual gives two different phone/WhatsApp \
-numbers and two e-mail spellings (mention both); shipping at exactly R$ 500,00 is not \
-defined; the PIX discount on a split payment is not defined.
+manual below; answer them directly when the manual is clear. When a rule depends on a fact \
+the customer has not given (dates, condition of the product, payment), explain the rule and \
+ask for that fact in one objective question. Never promise that an exchange, return or refund \
+will be approved. Where the manual is silent or contradictory, say so instead of choosing: it \
+gives two different phone/WhatsApp numbers and two e-mail spellings (whenever you give \
+contacts, give both and say the manual is inconsistent about them); shipping at exactly \
+R$ 500,00 is not defined; the PIX discount on a split payment is not defined.
 - You cannot see orders or customer data, and you cannot buy, reserve, pay, cancel, refund, \
 open tickets or transfer to a human. Never say any of these happened; explain how the \
 customer can contact the store instead. Never ask for card numbers, CPF or passwords.
@@ -144,13 +157,14 @@ def config_version(generator: Generator, config: AgentConfig) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def extract_sources(text: str, snapshot: CatalogSnapshot) -> tuple[str, list[dict], int]:
-    """Strip the trailing citation line; keep only section ids that exist in this generation."""
+def extract_sources(text: str, snapshot: CatalogSnapshot) -> tuple[str, list[dict], list[str]]:
+    """Strip the trailing citation line; keep only section ids that exist in this generation.
+    Also returns the dropped ids (model text, each cut to 40 chars)."""
     match = SOURCE_LINE.search(text)
     if not match:
-        return text, [], 0
+        return text, [], []
     sections = {s["id"]: s for s in snapshot.policies()["sections"]}
-    sources, dropped, seen = [], 0, set()
+    sources, dropped, seen = [], [], set()
     for raw in match.group(1).split(","):
         section_id = raw.strip().lstrip("§").strip()
         if not section_id or section_id in seen:
@@ -158,12 +172,42 @@ def extract_sources(text: str, snapshot: CatalogSnapshot) -> tuple[str, list[dic
         seen.add(section_id)
         section = sections.get(section_id)
         if section is None:
-            dropped += 1
+            dropped.append(section_id[:40])
             continue
         sources.append(
             {"section": section_id, "title": section["title"] or "Capa", "pages": _pages(section)}
         )
     return text[: match.start()].rstrip(), sources, dropped
+
+
+TRACE_LIMIT_CHARS = 4_000  # per recorded value (arguments, result, error); larger ones are cut
+
+
+def _bounded(value: object) -> tuple[object, bool]:
+    """The value itself if its JSON fits the limit, else a cut JSON string, flagged."""
+    blob = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if len(blob) <= TRACE_LIMIT_CHARS:
+        return value, False
+    return blob[:TRACE_LIMIT_CHARS], True
+
+
+def _tool_step(call: int, block: dict, outcome: dict) -> dict:
+    """What actually ran: validated arguments (rejected input is never copied) and the public
+    result or sanitized error the model received."""
+    name = block.get("name")
+    arguments, cut_args = _bounded(validated_arguments(name, block.get("input")))
+    step = {
+        "step": "tool",
+        "call": call,
+        "tool_use_id": str(block.get("id"))[:64],
+        "name": str(name)[:64],
+        "arguments": arguments,
+        "ok": outcome["ok"],
+    }
+    key = "result" if outcome["ok"] else "error"
+    step[key], cut_value = _bounded(outcome if outcome["ok"] else outcome["error"])
+    step["truncated"] = cut_args or cut_value
+    return step
 
 
 class Agent:
@@ -178,7 +222,10 @@ class Agent:
         history: list[dict],
         user_text: str,
         context: CallContext,
+        trace: list | None = None,
     ) -> TurnResult:
+        """`trace` (evaluation runs only) receives, in order, each model call and each tool call
+        with its validated arguments and public result, bounded by TRACE_LIMIT_CHARS."""
         cfg = self.config
         if not user_text.strip() or len(user_text) > cfg.max_user_chars:
             raise TurnError("invalid_message")
@@ -211,6 +258,15 @@ class Agent:
             calls += 1
             if reply.op_id:
                 ops.append(reply.op_id)
+            if trace is not None:
+                trace.append(
+                    {
+                        "step": "model",
+                        "call": calls,
+                        "op_id": reply.op_id,
+                        "stop": reply.stop_reason,
+                    }
+                )
             tool_uses = [b for b in reply.content if b.get("type") == "tool_use"]
 
             if reply.stop_reason == "tool_use" and tool_uses:
@@ -232,6 +288,8 @@ class Agent:
                         seen.add(key)
                         outcome = call_tool(snapshot, block.get("name"), block.get("input"))
                     used.append(str(block.get("name")))
+                    if trace is not None:
+                        trace.append(_tool_step(calls, block, outcome))
                     results.append(
                         {
                             "type": "tool_result",
@@ -252,7 +310,9 @@ class Agent:
                 body, sources, dropped = extract_sources(text, snapshot)
                 if not body:
                     return stop("incomplete", "incomplete")
-                return TurnResult("answered", body, sources, calls, used, dropped, ops)
+                return TurnResult(
+                    "answered", body, sources, calls, used, len(dropped), ops, dropped[:10]
+                )
             if reply.stop_reason == "refusal":
                 return stop("refused", "refused")
             if reply.stop_reason in ("max_tokens", "model_context_window_exceeded"):

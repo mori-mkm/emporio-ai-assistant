@@ -349,6 +349,19 @@ def _failure(code: str, message: str, **extra: object) -> dict:
     return {"ok": False, "error": {"code": code, "message": message, **extra}}
 
 
+def validated_arguments(name: object, arguments: object) -> dict | None:
+    """The arguments exactly as `call_tool` validates them (for evaluation traces); None when
+    the tool is unknown or the arguments are rejected, so rejected input is never copied."""
+    tool = TOOLS.get(name) if isinstance(name, str) else None
+    if tool is None:
+        return None
+    try:
+        args = tool.args.model_validate(arguments if arguments is not None else {})
+    except ValidationError:
+        return None
+    return args.model_dump(mode="json")
+
+
 def call_tool(snapshot: CatalogSnapshot, name: str, arguments: object) -> dict:
     tool = TOOLS.get(name) if isinstance(name, str) else None
     if tool is None:

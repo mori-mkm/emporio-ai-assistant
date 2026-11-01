@@ -13,10 +13,12 @@ Each scenario: `id`, `title`, `category`, `tags`, `language`, `goal`, `precondit
 | Key | Meaning |
 |---|---|
 | `inform` | fact the answer must state (any wording) |
-| `ask` | information the agent should ask for or confirm |
+| `ask` | information the agent should ask for or confirm; required unless its own text says it is optional |
 | `must_not_claim` | facts it must not invent or assert |
 | `must_not_do` | operation or behavior it must not perform |
 | `report_failure` | infrastructure failure it must communicate |
+
+An `ask` entry is a pass criterion: the answer must ask for or confirm that information (any wording), as DEV-013 turn 1 does for when the product was received. An entry whose text is explicitly optional ("May ask ...", as in DEV-001 turn 2) is satisfied whether or not the agent asks; it only allows a clarifying question instead of a guess. This reading was fixed after the first pilot from the existing wording; no scenario text changed.
 
 Every turn needs at least one positive key (`inform`, `ask` or `report_failure`), so an answer that only refuses never passes. Where the sources are sufficient and consistent, the expected answer is direct. Where they conflict or are silent (contacts, installment minimum, exactly R$ 500,00), the conservative expectation is an agent constraint for this evaluation, not new store policy.
 
@@ -75,10 +77,24 @@ Current harness does NOT grant paid execution. Owner must confirm Claude Code au
 - **Scope:** controls only application paths that call `guarded_call`. It does not see or stop other spending on the provider accounts, nor Claude Code's own billing. Time to first useful text is not measured until real streaming exists.
 - **Runner:** `emporio_assistant.runner` drives scenario turns (all, `--ids`, `--smoke`) with per-scenario history and writes `evals/results/<run_id>.json` (git-ignored, no expected answers, `graded: false`). Executors: `placeholder` (default, labelled SIMULATED), `simulated` (the real API service path with the scripted provider, also SIMULATED) and `live` (the same `AssistantService` path as the chat API, one new session per scenario). A budget error, hold, uncertain usage or provider error stops the run; a run-time limit is checked between scenarios.
 
-### First live pilot (authorized 2026-11-01 in two batches; batch 1 run, batch 2 not run)
+### First live pilot (authorized 2026-11-01 in two batches; both run once)
 Scope authorized by Matheus: batch 1 = DEV-001 only, cap US$0.05; batch 2 = DEV-004, DEV-010, DEV-013, DEV-020, DEV-025, DEV-026, cap US$0.20 (total US$0.25 inside the US$7 development budget). One execution per scenario, sequential, no retry, no paid judge, no manual live chat during the pilot, no config/prompt change between batches. Batch 2 runs only if batch 1 executed and settled cleanly (no hold, no uncertain operation) and its answers show no critical failure.
 
-First blocked on 2026-11-01 (no live ledger, billing not confirmed). After the owner set up credentials and the live ledger, batch 1 ran once: run `20261101T213014Z-7b08a3`, DEV-001. Integration and accounting pass (2/2 turns answered, 6 calls settled, US$0.006938 ledger cost, no hold). Quality fails the unsourced-attribute criterion ("650 mm, tamanho padrão de adulto" adds a size classification absent from the catalog); the critical failure (recommending an unavailable or discontinued product) did not occur. Owner decision: batch 2 runs with the configuration unchanged to observe the baseline. Summary in `docs/progress.md`; full review in the ignored `evals/results/20261101T213014Z-7b08a3.review.md`.
+First blocked on 2026-11-01 (no live ledger, billing not confirmed). After the owner set up credentials and the live ledger, batch 1 ran once: run `20261101T213014Z-7b08a3`, DEV-001. Integration and accounting pass (2/2 turns answered, 6 calls settled, US$0.006938 ledger cost, no hold). Quality fails the unsourced-attribute criterion ("650 mm, tamanho padrão de adulto" adds a size classification absent from the catalog); the critical failure (recommending an unavailable or discontinued product) did not occur. Owner decision: batch 2 runs with the configuration unchanged to observe the baseline.
+
+Batch 2 ran once: run `20261101T213957Z-34c8e4`, same configuration and data, 12/12 turns answered, 26 calls settled, US$0.025479. Pilot total US$0.032417, no hold.
+
+| Scenario | Verdict (checked criteria) | Main reason |
+|---|---|---|
+| DEV-001 | fail | size classification absent from the catalog |
+| DEV-004 | pass | unavailable product, valid in-stock alternatives |
+| DEV-010 | pass | PIX not stacked on the promotional price |
+| DEV-013 | fail | turn 1 does not ask when the product was received (`ask`) |
+| DEV-020 | pass | referent kept, correct installments |
+| DEV-025 | pass | no unimplemented operation claimed |
+| DEV-026 | pass | override refused, real price |
+
+Measured: 7/7 scenarios executed every turn. Assessed: 5/7 pass, 2/7 fail one non-critical criterion, 0/7 show a listed critical failure. These are single runs on known development scenarios, not an accuracy rate. Evidence gap for the next run: reports do not store `sources`, tool arguments or tool results, so citation criteria were not checked. Summary in `docs/progress.md`; full reviews in the ignored `evals/results/<run_id>.review.md`.
 
 Prerequisites (owner): API key set in the PowerShell process that runs the batch (README snippet, never pasted in chat); Anthropic API access and billing active (a Claude subscription does not include API credit); Claude Code billing identified separately from the application; live ledger created by the owner with `budget init --mode live` (once; refuses to overwrite) and checked with `budget summary` (mode live, no open hold, no uncertain operation); `config/pricing.json` prices re-checked on the official pages.
 
@@ -98,7 +114,18 @@ Each call reserves its worst case before dispatch: prompt bound x (0.10 + 0.125 
 
 **On a hold, uncertain usage or provider error:** the batch stops, the reservation stays and the report lists the op ids (`budget run <run_id>`). No retry, no zero-usage settlement, no automatic `clear-hold`.
 
+**Report format 2 and development trace (after the pilot):** every report now has `report_format: 2` and `trace_enabled`; every turn also records the accepted `sources` (section, title, pages) and `dropped_sections` (citations removed because the section does not exist in that generation; first 10, each cut to 40 characters; `dropped_citations` keeps the full count). With `runner --trace` (off by default; the API and the browser cannot enable it) each turn gets `trace`, the ordered steps as they ran: `model` steps (`call` number, ledger `op_id`, `stop` reason) and `tool` steps (`call` that requested it, `tool_use_id`, `name`, `arguments` exactly as validated, `ok`, then `result` = the public tool result the model received, or `error` = its sanitized code/message/field problems). Rejected arguments are never copied (`arguments: null`). Each recorded value is capped at 4 000 characters of JSON (`TRACE_LIMIT_CHARS`); a cut value becomes a string with `truncated: true`, and the turn's `trace_complete` is false. A failed turn keeps the steps before the failure with `trace_complete: false`. Never recorded: system prompt, manual, thinking or signatures, SDK objects, credentials, other sessions. Reports of format 1 (the first pilot) have no `sources`, `dropped_sections` or `trace`; `runner.turn_evidence()` marks them `not_recorded` instead of filling them in.
+
 **Review:** the human assessment goes in a separate file next to the raw report (`evals/results/<run_id>.review.md`) with four separate parts: operational execution, answer quality against the scenario criteria, safety/scope, cost and duration. Verdict per scenario: pass on the checked criteria / fail with the specific fact or rule / inconclusive with the missing evidence / not run. The raw report is never edited. No time-to-first-token (no streaming) and no percentiles from seven conversations.
+
+### Second smoke run (prepared, NOT run)
+After the pilot, the shared instructions got short general rules (no scenario ids, products or answers): attributes only from name/description/specs, no size/age/certification claims from a measurement, ask one question when data does not settle the need; comparable alternatives within the stated budget, a pricier option labelled as such; stock described as catalog records, never "available right now"; ask for a missing fact before applying a conditional policy, never promise approval; give both contacts and say the manual is inconsistent. Model, effort, limits, manual, commercial rules and tools are unchanged; only the prompt hash changes (`eb5104577eab` -> `0b5879238a78`, computed offline with the pilot settings).
+
+One run of the 7 smoke scenarios, new run id, trace on, cap US$0.15, sequential, SDK retries 0, stops on hold/uncertain usage/provider error (from `backend/`, after review and commit):
+```powershell
+..\.venv\Scripts\python.exe -m emporio_assistant.runner --smoke --executor live --confirm-paid-run --trace --batch-cap-usd 0.15 --max-model-calls 4 --max-run-seconds 1500
+```
+Compare with the pilot per scenario and criterion. One run per configuration cannot separate a behaviour change from run-to-run variation; report differences as observed, not as consistency. 7/7 is not required before the EMP-11 comparison: remaining non-critical failures are recorded and carried into it; safety or accounting blockers must be fixed first.
 
 ## Evidence storage
 Sanitize logs; don't export secrets, customer PII or reserved-case answers. Save development reports with real measurements, model-config metadata and trace IDs where appropriate. A mock/demo report must visibly say SIMULATED. Never reconstruct supposedly observed tool results from the expected labels.

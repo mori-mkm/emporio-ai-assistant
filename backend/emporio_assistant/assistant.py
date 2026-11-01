@@ -218,9 +218,12 @@ class AssistantService:
         request_id: str,
         scenario_id: str | None = None,
         diagnostics: dict | None = None,
+        trace: bool = False,
     ) -> dict:
         """Public reply only. `diagnostics` (runner use; the API never passes it) receives the
-        turn status, model calls, tools and ledger op ids, which never enter the public reply."""
+        turn status, model calls, tools, citations and ledger op ids; with `trace` also the
+        ordered model/tool steps, kept there even when the turn fails. None of it enters the
+        public reply."""
         session = self.store.get(session_id)
         if not session.lock.acquire(blocking=False):
             raise PublicError(
@@ -233,7 +236,7 @@ class AssistantService:
                     raise cached
                 return cached
             try:
-                reply = self._turn(session, text, request_id, scenario_id, diagnostics)
+                reply = self._turn(session, text, request_id, scenario_id, diagnostics, trace)
             except PublicError as error:
                 if error.code not in ("session_busy", "data_changed"):
                     self._remember(session, request_id, error)
@@ -256,7 +259,11 @@ class AssistantService:
         request_id: str,
         scenario_id: str | None,
         diagnostics: dict | None = None,
+        trace: bool = False,
     ) -> dict:
+        steps = None
+        if trace and diagnostics is not None:
+            steps = diagnostics["trace"] = []
         with self._snapshot() as snapshot:
             if snapshot.id != session.generation_id:
                 self.store.drop(session.id)
@@ -272,7 +279,7 @@ class AssistantService:
                 run_cap_micro_usd=self.run_cap_micro_usd,
             )
             try:
-                result = self.agent.run_turn(snapshot, session.history, text, context)
+                result = self.agent.run_turn(snapshot, session.history, text, context, steps)
             except TurnError as error:
                 status, message = TURN_ERRORS[error.code]
                 raise PublicError(error.code, status, message) from None
@@ -290,7 +297,9 @@ class AssistantService:
                 status=result.status,
                 model_calls=result.model_calls,
                 tools_used=list(result.tools_used),
+                sources=list(result.sources),
                 dropped_citations=result.dropped_citations,
+                dropped_sections=list(result.dropped_sections),
                 op_ids=list(result.op_ids),
                 data_generation=snapshot.id,
             )
