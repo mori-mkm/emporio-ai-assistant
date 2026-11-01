@@ -28,9 +28,28 @@ class ModelPrice:
     # (e.g. reasoning tokens billed as output) are in `included_in` and cost nothing extra.
     prices: dict[str, Decimal]
     included_in: dict[str, str]
+    # Categories the provider always reports for this model. A settled usage must contain each
+    # one explicitly (0 is a valid reported value); a missing one makes the cost unknown.
+    required_usage: frozenset[str]
+    # Price tier limit: the entry's prices are valid only up to this prompt size.
+    max_prompt_tokens: int | None = None
+    prompt_categories: frozenset[str] = frozenset()
+
+    def settlement_cost_micro_usd(self, usage: dict[str, int]) -> int:
+        """Cost of reported usage. Refuses empty/incomplete usage and prompts above the tier."""
+        missing = self.required_usage - set(usage)
+        if not usage or missing:
+            raise PricingError(f"incomplete usage: missing {sorted(missing) or 'all categories'}")
+        if self.max_prompt_tokens is not None:
+            prompt = sum(usage.get(c, 0) for c in self.prompt_categories)
+            if prompt > self.max_prompt_tokens:
+                raise PricingError("prompt exceeded the priced tier; higher prices not configured")
+        return self.cost_micro_usd(usage)
 
     def cost_micro_usd(self, units: dict[str, int]) -> int:
-        """Exact cost rounded up to the micro-dollar. Raises PricingError on unknown categories."""
+        """Exact cost rounded UP to the micro-dollar (may overstate a call by < 1 µUSD).
+
+        Raises PricingError on unknown categories."""
         total = Decimal(0)
         for category, count in units.items():
             if type(count) is not int or count < 0:
@@ -93,4 +112,21 @@ def _parse_entry(entry: dict) -> ModelPrice | None:
         prices[category] = value
     if not prices or not set(included.values()) <= set(prices):
         return None
-    return ModelPrice(entry["provider"], entry["model"], prices, included)
+    required = entry.get("required_usage", sorted(prices))
+    if not isinstance(required, list) or not required or not set(required) <= set(prices):
+        raise PricingError("required_usage must list priced categories")
+    tier = entry.get("max_prompt_tokens")
+    prompt_categories = entry.get("prompt_categories", [])
+    if tier is not None and (type(tier) is not int or tier <= 0 or not prompt_categories):
+        raise PricingError("max_prompt_tokens needs a positive integer and prompt_categories")
+    if not set(prompt_categories) <= set(prices):
+        raise PricingError("prompt_categories must be priced categories")
+    return ModelPrice(
+        entry["provider"],
+        entry["model"],
+        prices,
+        included,
+        frozenset(required),
+        tier,
+        frozenset(prompt_categories),
+    )

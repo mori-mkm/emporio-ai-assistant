@@ -80,6 +80,7 @@ SELECT COALESCE(SUM(CASE
     ELSE 0 END), 0)
 FROM operations WHERE budget = ?
 """
+COMMITTED_RUN_SQL = COMMITTED_SQL.replace("WHERE budget = ?", "WHERE run_id = ?")
 
 
 class BudgetError(Exception):
@@ -128,6 +129,7 @@ class CallRequest:
     data_version: str = "unknown"
     sdk_retries: int = 0  # adapters must disable SDK retries; each retry is a new request
     timeout_s: float = 60.0  # the adapter must pass this to its SDK
+    run_cap_micro_usd: int | None = None  # optional extra ceiling for one batch (run_id)
 
 
 @dataclass(frozen=True)
@@ -207,6 +209,15 @@ class Ledger:
             ).fetchone():
                 raise LedgerConflict(f"operation {request.op_id} already exists")
             committed = connection.execute(COMMITTED_SQL, (request.budget,)).fetchone()[0]
+            if request.run_cap_micro_usd is not None:
+                run_committed = connection.execute(COMMITTED_RUN_SQL, (request.run_id,)).fetchone()[
+                    0
+                ]
+                if run_committed + reserved > request.run_cap_micro_usd:
+                    raise InsufficientBudget(
+                        f"run {request.run_id}: reserving {reserved} µUSD would exceed the "
+                        f"batch cap ({run_committed} of {request.run_cap_micro_usd} committed)"
+                    )
             if committed + reserved > CAPS_MICRO_USD[request.budget]:
                 raise InsufficientBudget(
                     f"{request.budget}: reserving {reserved} µUSD would exceed the cap "
@@ -276,7 +287,8 @@ class Ledger:
             if row["state"] not in {"dispatched", "uncertain"}:
                 raise LedgerConflict(f"operation {op_id} is {row['state']}; cannot settle")
             try:
-                cost = pricing.get(row["provider"], row["model"]).cost_micro_usd(usage)
+                price = pricing.get(row["provider"], row["model"])
+                cost = price.settlement_cost_micro_usd(usage)
             except PricingError as error:
                 self._hold(connection, op_id, f"usage cannot be priced: {error}")
                 connection.execute(
@@ -373,6 +385,10 @@ def reservation_micro_usd(request: CallRequest, pricing: PriceTable) -> int:
             raise BudgetError(f"missing limits for billable categories {sorted(missing)}")
         if "output" in price.prices and request.limits.get("output", 0) <= 0:
             raise BudgetError("an output token limit is required")
+        if price.max_prompt_tokens is not None and any(
+            request.limits.get(c, 0) > price.max_prompt_tokens for c in price.prompt_categories
+        ):
+            raise BudgetError("prompt limit is above the priced tier; refusing")
         return price.cost_micro_usd(request.limits)
     except PricingError as error:
         raise BudgetError(f"refused: {error}") from None
@@ -428,6 +444,12 @@ def main(argv: list[str] | None = None) -> int:
     init = commands.add_parser("init", help="create a new empty ledger (refuses to overwrite)")
     init.add_argument("--mode", choices=sorted(MODES), required=True)
     commands.add_parser("summary", help="print totals and open holds as JSON")
+    settle = commands.add_parser(
+        "settle", help="owner action: record usage confirmed in the provider console"
+    )
+    settle.add_argument("op_id")
+    settle.add_argument("--usage", required=True, help='JSON, e.g. {"input": 10, "output": 5}')
+    settle.add_argument("--pricing", type=Path, default=None)
     clear = commands.add_parser("clear-hold", help="owner action after reviewing an operation")
     clear.add_argument("op_id")
     clear.add_argument("--note", required=True)
@@ -438,10 +460,17 @@ def main(argv: list[str] | None = None) -> int:
             print(f"OK: created {args.mode} ledger")
         elif args.command == "summary":
             print(json.dumps(Ledger(args.ledger).summary(), indent=2))
+        elif args.command == "settle":
+            from .pricing import DEFAULT_PATH as PRICING_PATH
+            from .pricing import load_price_table
+
+            pricing = load_price_table(args.pricing or PRICING_PATH)
+            cost = Ledger(args.ledger).settle(args.op_id, json.loads(args.usage), pricing)
+            print(f"OK: {args.op_id} settled at {cost} µUSD")
         else:
             Ledger(args.ledger).clear_hold(args.op_id, args.note)
             print(f"OK: hold on {args.op_id} cleared")
-    except BudgetError as error:
+    except (BudgetError, PricingError, json.JSONDecodeError) as error:
         print(f"FAILED: {error}")
         return 1
     return 0

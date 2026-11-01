@@ -1,11 +1,21 @@
 # Session handoff
 
-## Current state (2026-11-01, EMP-7 and EMP-8 ready for Matheus review)
-- Git: `main` at `b82d8df` (EMP-5 fix + EMP-6 committed). EMP-7 and EMP-8 uncommitted; Matheus stages/commits.
-- Linear: no connector in the Claude session; proposed: EMP-7 and EMP-8 In Review with the evidence below.
-- Implemented: health API + status page (EMP-4); data generations (EMP-5); 30 scenarios + validator (EMP-6); budget ledger, guarded call path and SIMULATED runner (EMP-7); read-only tools and commercial rules (EMP-8). No agent, prompt, model SDK, chat endpoint or UI yet.
-- Live calls / spend: none. No price verified in `config/pricing.json`, so the paid path refuses every model. Claude Code billing mode still unconfirmed.
-- Owner pending: the 10 reserved validation cases (outside the repo); verify official prices and the exact model id before EMP-9; create the live ledger (`budget init --mode live`) before the first paid run.
+## Current state (2026-11-01, EMP-7 fix + EMP-9 + EMP-10 ready for Matheus review)
+- Git: `main` at `021adc7` (EMP-7 + EMP-8 committed). This block is uncommitted; Matheus stages/commits.
+- Linear: no connector in the Claude session; proposed: comment on EMP-7 (usage-accounting fix), EMP-9 and EMP-10 In Review.
+- Implemented: chat UI, session API and single Haiku agent; simulated mode for offline use. The real Haiku path is tested ONLY with a fake client.
+- Live calls / spend: none. No live ledger created by Claude. Real Haiku test not run.
+- Owner pending: confirm credential and billing; `budget init --mode live`; re-check prices; authorize the pilot batch (`docs/evaluation.md` "First live pilot"); the 10 reserved validation cases before final validation.
+
+## 2026-11-01 — EMP-7 fix, EMP-9 Haiku agent + session API, EMP-10 chat UI
+- EMP-7 fix (reviewer repro on `021adc7`: `usage={}` settled at zero and released the reservation): settlement now requires every category in the price entry's `required_usage`; empty/incomplete usage -> `uncertain`, reservation kept, hold, turn/batch stops; explicit zero accepted; prompt tier (100k) enforced at reservation and settlement; per-run batch cap; owner `budget settle` CLI. Round-up to the micro-dollar kept and documented (may overstate < 1 µUSD per category per call).
+- Prices: `config/pricing.json` `2026-11-01.1` - Haiku 5.5 only, ≤100k-token tier, sources and date in the file (official model overview + pricing pages checked 2026-11-01).
+- Files (backend): `anthropic_adapter.py`, `agent.py`, `assistant.py` (new); `main.py`, `runner.py`, `budget.py`, `pricing.py`, `pyproject.toml` (`anthropic==2.3.0`), `constraints.txt` (+7 pins: anthropic, docstring_parser, httpcore2, httpx2, jiter, sniffio, truststore); tests `test_agent.py`, `test_api.py` (new), `conftest.py`, `test_budget.py`, `test_runner.py`. Frontend: `src/App.tsx`, `src/api.ts`, `src/index.css`. Root: `.env.example`. Docs: README, architecture, development, evaluation, security, progress.
+- Design and limits: `docs/architecture.md` "Implemented flow (EMP-9/10)" and the code-vs-model controls table.
+- Offline tests (fake Anthropic client, temporary live ledgers): direct policy answer with sources; tool_use -> real tool -> tool_result -> answer; two tools in one call, sequential with correct ids; invalid arguments and unknown tool returned as errors; duplicate call; model-call, tool-call, time and max_tokens limits; refusal; empty answer; timeout, rate limit, 500 -> sanitized 504/503/502, reservation kept, not re-sent on repeat; empty/incomplete/valid usage; SDK built with retries 0; simulated ledger, fictitious prices and above-tier prompt refused; malicious tool text stays in tool_result; Soprano broad search -> agent offers only the soprano item (offline script, model behaviour still to evaluate); two isolated sessions, forged cookie, expiry, new conversation drops the old one; repeated request id -> no new call; concurrent message -> 409; client-supplied system/model/history/role/limits -> 422 without echo; data generation change between turns -> 409 `data_changed`; missing data -> 503 without path; health without assistant config.
+- Browser (real input, headless Edge via DevTools Protocol, simulated backend; `.local/chat-check.mjs`): 10/10 steps pass - load with banner/label/regions and focus; Shift+Enter newline without sending, Enter sends, labelled simulated reply with sources, box cleared and focused; continuity and double-Enter sends once; network failure -> alert, text kept, no phantom message; keyboard retry recovers; a reply held in flight is dropped after "Nova conversa"; new session works; Tab/Shift+Tab order with visible focus; 360 px width without horizontal scroll (screenshot reviewed). Bug found and fixed by this check: "Nova conversa" kept the unsent text. Not covered: screen reader output, light theme, real provider latency.
+- Checks: see the final block below.
+- Limits: real model behaviour (tool use, citations, Soprano selection, tone, injection resistance) unmeasured; no streaming; single worker in-memory sessions; no per-client rate limit.
 
 ## 2026-11-01 — EMP-8 read-only tools and deterministic commercial rules
 - Files: `backend/emporio_assistant/commerce.py`, `tools.py`, `tests/test_commerce.py`, `tests/test_tools.py`, `docs/tools.md`; scenario contract v2 (`evals/development_scenarios.json`, `scenarios.py`, `test_scenarios.py`, `docs/evaluation.md`).
@@ -114,7 +124,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews and commits EMP-7 + EMP-8. Next block: EMP-9 (Haiku full-manual baseline through `guarded_call` and these tools) and EMP-10 (chat UI), after prices and the model id are verified.
+Matheus reviews and commits the EMP-7 fix + EMP-9 + EMP-10. Then, only with his authorization: create the live ledger and run the smoke pilot (`docs/evaluation.md`). Luna/Qwen adapters and retrieval variants not started.
 
 ## Update template
 - Date / EMP issue:

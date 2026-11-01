@@ -19,6 +19,7 @@ from emporio_assistant.budget import (
     NotSent,
     UncertainUsage,
     guarded_call,
+    reservation_micro_usd,
 )
 from emporio_assistant.pricing import DEFAULT_PATH, load_price_table
 
@@ -179,8 +180,11 @@ def test_unknown_price_or_missing_limits_are_refused(ledger, pricing):
         guarded_call(ledger, pricing, request(limits={"output": 10}), ok({}))
     with pytest.raises(BudgetError, match="output token limit"):
         guarded_call(ledger, pricing, request(limits={"input": 10, "output": 0}), ok({}))
-    shipped = load_price_table(DEFAULT_PATH)  # versioned config has no verified price yet
-    assert shipped.models == {}
+    shipped = load_price_table(DEFAULT_PATH)  # versioned config: only the verified Haiku entry
+    assert not shipped.fictitious
+    assert set(shipped.models) == {("anthropic", "claude-haiku-5-5")}
+    with pytest.raises(BudgetError, match="no verified price"):
+        reservation_micro_usd(request(provider="anthropic", model="claude-haiku-4-5"), shipped)
 
 
 def test_margin_and_other_budget_are_never_used_automatically(ledger):
@@ -219,3 +223,50 @@ def test_live_ledger_refuses_fictitious_prices(tmp_path, pricing):
     live = Ledger.create(tmp_path / "live.sqlite", "live")
     with pytest.raises(BudgetError, match="fictitious"):
         guarded_call(live, pricing, request(), ok({"input": 1, "output": 1}))
+
+
+@pytest.mark.parametrize("usage", [{}, {"input": 500}, {"output": 100}])
+def test_empty_or_incomplete_usage_keeps_the_reservation(ledger, pricing, usage):
+    with pytest.raises(UncertainUsage):
+        guarded_call(ledger, pricing, request(), ok(usage))
+    summary = ledger.summary()
+    assert summary["operations_by_state"] == {"uncertain": 1}
+    assert summary["budgets"]["development"]["confirmed_micro_usd"] == 0
+    assert available(ledger) == 7 * MICRO - 2000  # nothing released
+    assert [h["op_id"] for h in summary["open_holds"]] == ["op-1"]
+
+
+def test_ledger_itself_refuses_empty_usage_whatever_the_adapter_does(ledger, pricing):
+    ledger.reserve(request(), 2000, "test")
+    ledger.mark_dispatched("op-1")
+    with pytest.raises(UncertainUsage):
+        ledger.settle("op-1", {}, pricing)
+    assert available(ledger) == 7 * MICRO - 2000
+
+
+def test_explicit_zero_usage_is_a_valid_report(ledger, pricing):
+    guarded_call(ledger, pricing, request(), ok({"input": 0, "output": 0}))
+    assert ledger.summary()["operations_by_state"] == {"settled": 1}
+    assert available(ledger) == 7 * MICRO
+
+
+def test_batch_cap_limits_one_run(ledger, pricing):
+    capped = dict(run_id="pilot", run_cap_micro_usd=5000)
+    guarded_call(ledger, pricing, request("a", **capped), ok({"input": 1000, "output": 200}))
+    guarded_call(ledger, pricing, request("b", **capped), ok({"input": 1000, "output": 200}))
+    with pytest.raises(InsufficientBudget, match="batch cap"):  # 4000 + 2000 > 5000
+        guarded_call(ledger, pricing, request("c", **capped), ok({"input": 1, "output": 1}))
+    guarded_call(ledger, pricing, request("d"), ok({"input": 1, "output": 1}))  # other run
+
+
+def test_prompt_tier_is_enforced(tmp_path, ledger):
+    tiered = json.loads(json.dumps(FAKE_PRICES))
+    tiered["models"][0].update(max_prompt_tokens=1000, prompt_categories=["input"])
+    path = tmp_path / "tiered.json"
+    path.write_text(json.dumps(tiered), encoding="utf-8")
+    pricing = load_price_table(path)
+    with pytest.raises(BudgetError, match="priced tier"):
+        guarded_call(ledger, pricing, request(limits={"input": 1001, "output": 1}), ok({}))
+    with pytest.raises(UncertainUsage):  # reported prompt above the tier: cost unknown
+        guarded_call(ledger, pricing, request(), ok({"input": 1001, "output": 1}))
+    assert ledger.summary()["open_holds"]

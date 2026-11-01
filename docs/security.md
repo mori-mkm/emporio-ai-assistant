@@ -24,6 +24,8 @@ Preserve original challenge ZIP/PDF/CSV data. Derived SQLite/chunks/indexes go e
 - Timeouts, output limits, retry budget, request-size/rate limits suitable to the chosen deployment.
 - Adversarial tests include data enumeration, session switching, instruction override, original-document injection and fake claims that a purchase/refund was completed.
 
+Status (EMP-9/10): implemented and tested offline - allowlisted read-only tools with strict arguments; backend-owned opaque session cookie (HttpOnly, SameSite=Strict, `/api`), cross-session and forged-id access refused, expiry, Origin check on generation endpoints, request bodies limited to text + request id (`extra="forbid"`), per-session single-flight and request-id dedup; sanitized error bodies (no input echo, paths, SDK text or reasoning); plain-text rendering in the UI; timeouts, call/tool/output/prompt limits, SDK retries off; tool output that contains instructions stays inside `tool_result` data (offline test). Not yet tested: the same adversarial cases against the real model (requires the live pilot); rate limiting per client (not implemented; sessions are capped at 200).
+
 ## Reserved evaluation
 Owner-managed held-out cases stay outside the accessible development workspace. `.private` and `evals/holdout` read-denies are additional accidental-exposure guards, not permission to place secrets there and assume perfect isolation.
 

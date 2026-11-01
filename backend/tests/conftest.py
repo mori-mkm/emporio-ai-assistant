@@ -108,3 +108,92 @@ def manual(tmp_path: Path) -> Path:
     path.parent.mkdir()
     make_pdf(path, SYNTHETIC_PAGES, SYNTHETIC_OUTLINE)
     return path
+
+
+def prepare_generation(csv_dir: Path, manual: Path, out: Path) -> Path:
+    """Publish a synthetic generation with the real preparation command."""
+    from emporio_assistant.prepare_data import main as prepare
+
+    args = ["--csv-dir", str(csv_dir), "--manual", str(manual), "--output-dir", str(out)]
+    assert prepare(args) == 0
+    return out
+
+
+@pytest.fixture
+def generation_dir(csv_dir: Path, manual: Path, tmp_path: Path) -> Path:
+    return prepare_generation(csv_dir, manual, tmp_path / "derived")
+
+
+# ---- Fake Anthropic client: OFFLINE, returns real SDK Message objects, never opens a socket.
+
+USAGE_OK = {
+    "input_tokens": 1000,
+    "output_tokens": 200,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0,
+    "cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 0},
+    "service_tier": "standard",
+}
+
+
+def message(content, stop_reason="end_turn", usage=None):
+    from anthropic.types import Message
+
+    return Message.model_validate(
+        {
+            "id": "msg_test",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-haiku-5-5",
+            "content": content,
+            "stop_reason": stop_reason,
+            "stop_sequence": None,
+            "usage": USAGE_OK if usage is None else usage,
+        }
+    )
+
+
+def text(value, usage=None):
+    return message([{"type": "text", "text": value}], "end_turn", usage)
+
+
+def tool_use(*calls, thinking=True):
+    blocks = [{"type": "thinking", "thinking": "", "signature": "sig-abc"}] if thinking else []
+    blocks += [
+        {"type": "tool_use", "id": f"toolu_{i}_{name}", "name": name, "input": args}
+        for i, (name, args) in enumerate(calls)
+    ]
+    return message(blocks, "tool_use")
+
+
+class FakeAnthropic:
+    """Scripted `client.messages.create`; items are Messages, exceptions or callables."""
+
+    def __init__(self, *script):
+        self.script = list(script)
+        self.requests = []
+        self.messages = self
+
+    def create(self, **params):
+        import copy
+
+        self.requests.append(copy.deepcopy(params))
+        item = self.script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item(params) if callable(item) else item
+
+
+@pytest.fixture
+def live_ledger(tmp_path: Path):
+    """A temporary live ledger for tests; the real ledger is never touched."""
+    from emporio_assistant.budget import Ledger
+
+    return Ledger.create(tmp_path / "ledger-test.sqlite", "live")
+
+
+@pytest.fixture
+def pricing():
+    from emporio_assistant.pricing import load_price_table
+
+    return load_price_table()  # versioned config: verified Haiku prices

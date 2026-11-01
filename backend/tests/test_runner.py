@@ -54,3 +54,39 @@ def test_errors_are_recorded_and_budget_errors_stop_the_run(tmp_path):
 def test_cli_rejects_unknown_ids(tmp_path, capsys):
     assert main(["--ids", "DEV-999", "--out-dir", str(tmp_path)]) == 1
     assert "unknown scenario ids" in capsys.readouterr().out
+
+
+def test_service_executor_runs_scenarios_through_the_api_service(generation_dir, tmp_path):
+    from emporio_assistant.assistant import AssistantService, SimulatedGenerator
+    from emporio_assistant.runner import new_run_id, service_executor
+
+    service = AssistantService(SimulatedGenerator(), generation_dir)
+    run_id = new_run_id(True)
+    report = load(
+        run(
+            service_executor(service, run_id),
+            ids=["DEV-020", "DEV-001"],
+            out_dir=tmp_path,
+            run_id=run_id,
+        )
+    )
+    assert report["simulated"] is True and report["executor"] == "assistant-service-simulated"
+    assert all(
+        o.startswith("[Resposta simulada") for s in report["scenarios"] for o in s["outputs"]
+    )
+    sessions = list(service.store._sessions.values())
+    assert sorted(len(s.history) for s in sessions) == [4, 6]  # one session per scenario
+    assert {s.run_id for s in sessions} == {run_id}
+
+
+def test_live_pilot_requires_explicit_confirmation_and_a_small_cap(tmp_path, capsys):
+    base = ["--smoke", "--executor", "live", "--out-dir", str(tmp_path)]
+    assert main(base) == 1
+    assert "--confirm-paid-run" in capsys.readouterr().out
+    assert main([*base, "--confirm-paid-run", "--batch-cap-usd", "0.30"]) == 1
+    assert "<= 0.25" in capsys.readouterr().out
+    assert (
+        main([*base, "--confirm-paid-run", "--batch-cap-usd", "0.25", "--max-model-calls", "9"])
+        == 1
+    )
+    assert not list(tmp_path.iterdir())  # nothing ran
