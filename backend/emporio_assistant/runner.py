@@ -15,9 +15,11 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 
 from .budget import BudgetError
+from .fixtures import DEV_028_TEXT, AuxiliarySession, CatalogTimeout, ProductTextInjection
 from .scenarios import validate_structure
 
 REPO = Path(__file__).resolve().parents[2]
@@ -50,6 +52,21 @@ class Executor:
     trace: bool = False  # per-turn model/tool steps recorded
     execution: str = "simulated"  # simulated | local_inference | paid_api
     runtime_report: Callable[[], dict] | None = None  # local model state (version, ollama ps)
+    end_scenario: Callable[[str], dict | None] | None = None  # fixture report + cleanup
+    fixtures: bool = False  # scenario environments (FIXTURES) are applied
+
+
+# Scenario preconditions that need a test environment; applied only by service_executor.
+FIXTURES: dict[str, Callable] = {
+    "DEV-027": AuxiliarySession,
+    "DEV-028": partial(ProductTextInjection, 87, DEV_028_TEXT),
+    "DEV-029": CatalogTimeout,
+}
+PERTURBING_KINDS = {"tool_result_perturbation", "simulated_tool_failure"}
+
+
+def _kind(factory: Callable) -> str:
+    return getattr(factory, "func", factory).kind
 
 
 EXECUTION = {"live": "paid_api", "local": "local_inference", "simulated": "simulated"}
@@ -79,21 +96,42 @@ def new_run_id(simulated: bool) -> str:
     return run_id + ("-simulated" if simulated else "")
 
 
-def service_executor(service, run_id: str, trace: bool = False) -> Executor:
+def service_executor(
+    service, run_id: str, trace: bool = False, fixtures: dict | None = None
+) -> Executor:
     """Scenarios through AssistantService: the same sessions, agent, tools and budget path as
     the API. One fresh session per scenario; provider/budget failures stop the whole run.
-    `trace` records the ordered model/tool steps of each turn (development evaluation only)."""
+    `trace` records the ordered model/tool steps of each turn (development evaluation only).
+    `fixtures` (default FIXTURES) builds one environment per listed scenario, used only by
+    that scenario's session and discarded when it ends."""
     from .assistant import PublicError
 
-    sessions: dict[str, str] = {}
+    fixtures = FIXTURES if fixtures is None else fixtures
+    sessions: dict[str, object] = {}
+    envs: dict[str, object] = {}
 
     def respond(scenario_id: str, _history: list[dict], user: str) -> dict:
         if scenario_id not in sessions:
-            sessions[scenario_id] = service.start_session(run_id=run_id).id
+            env = fixtures[scenario_id]() if scenario_id in fixtures else None
+            if isinstance(env, AuxiliarySession):
+                env.prepare(service, run_id)  # the other session exists before this one
+            session = service.start_session(run_id=run_id)
+            if isinstance(env, AuxiliarySession):
+                env.evaluated_started(session)
+            sessions[scenario_id] = session
+            if env is not None:
+                envs[scenario_id] = env
+        env = envs.get(scenario_id)
         diagnostics: dict = {}
         try:
             reply = service.send(
-                sessions[scenario_id], user, secrets.token_hex(8), scenario_id, diagnostics, trace
+                sessions[scenario_id].id,
+                user,
+                secrets.token_hex(8),
+                scenario_id,
+                diagnostics,
+                trace,
+                tool_call=getattr(env, "call", None),
             )
         except PublicError as error:
             failure = BatchStopped(error.code) if error.stops_batch else error
@@ -106,6 +144,14 @@ def service_executor(service, run_id: str, trace: bool = False) -> Executor:
             )
         return {"text": reply["reply"]["text"], **diagnostics}
 
+    def end_scenario(scenario_id: str) -> dict | None:
+        env = envs.pop(scenario_id, None)
+        if env is None:
+            return None
+        if isinstance(env, AuxiliarySession):
+            return env.finish(service, sessions.get(scenario_id))
+        return env.report()
+
     generator = service.agent.generator
     describe = getattr(generator, "describe", dict)()
     ledger = getattr(generator, "ledger", None)
@@ -116,11 +162,17 @@ def service_executor(service, run_id: str, trace: bool = False) -> Executor:
         model=describe.get("model"),
         config_version=service.agent.version,
         respond=respond,
-        configuration={"generator": describe, "agent": asdict(service.agent.config)},
+        configuration={
+            "generator": describe,
+            "agent": asdict(service.agent.config),
+            "policy_context": service.agent.policy.describe(),
+        },
         ledger_report=ledger.run_report if ledger is not None else None,
         trace=trace,
         execution=EXECUTION[service.mode],
         runtime_report=getattr(generator, "runtime", None),
+        end_scenario=end_scenario,
+        fixtures=True,
     )
 
 
@@ -209,6 +261,9 @@ def run(
         record["turns_executed"] = sum(t["status"] != "error" for t in record["turns"])
         record["turns_answered"] = sum(t["status"] == "answered" for t in record["turns"])
         record["duration_ms"] = _ms(begin)
+        environment = executor.end_scenario(scenario["id"]) if executor.end_scenario else None
+        if environment is not None:
+            record["environment"] = environment
         if record["turns"] or not stopped:
             records.append(record)
         if stopped:
@@ -235,6 +290,12 @@ def run(
             {t["data_generation"] for r in records for t in r["turns"] if t.get("data_generation")}
         ),  # what the turns actually used
         "selection": "smoke" if smoke else (ids or "all"),
+        "order": [s["id"] for s in chosen],  # scenario-file order unless --ids sets it
+        "fixtures_enabled": executor.fixtures,
+        "environment_groups": {
+            "standard": [s["id"] for s in chosen if s["id"] not in _perturbed()],
+            "perturbed": [s["id"] for s in chosen if s["id"] in _perturbed()],
+        },
         "started_at": started_at.isoformat(timespec="seconds"),
         "stopped_early": stopped,
         "max_run_seconds": max_run_s,
@@ -255,6 +316,11 @@ def run(
     path = out_dir / f"{run_id}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _perturbed() -> set[str]:
+    """Scenarios whose tool results are changed by a fixture (reported apart)."""
+    return {sid for sid, factory in FIXTURES.items() if _kind(factory) in PERTURBING_KINDS}
 
 
 def _runtime(executor: Executor) -> dict | None:
@@ -312,6 +378,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--num-ctx", type=int, default=None, help="local: Ollama context")
     parser.add_argument("--num-predict", type=int, default=None, help="local: output tokens")
+    parser.add_argument(
+        "--policy-context",
+        choices=["full", "bm25"],
+        default="full",
+        help="manual sections in the prompt: full (baseline) or BM25 top-k (EMP-12)",
+    )
     parser.add_argument("--confirm-paid-run", action="store_true")
     parser.add_argument(
         "--trace",
@@ -360,6 +432,7 @@ def _service_executor(args) -> tuple[Executor, str]:
     from .agent import AgentConfig
     from .assistant import Settings, build_service, make_generator
     from .generation import AdapterConfigError, ProviderError
+    from .policy_context import POLICIES
 
     if not 1 <= args.max_model_calls <= 5:
         raise ValueError("--max-model-calls must be between 1 and 5")
@@ -389,7 +462,11 @@ def _service_executor(args) -> tuple[Executor, str]:
         if local:
             generator.check_model()  # missing model or another build: refuse, never substitute
         service = build_service(
-            settings, generator=generator, config=config, run_cap_micro_usd=cap_micro
+            settings,
+            generator=generator,
+            config=config,
+            run_cap_micro_usd=cap_micro,
+            policy=POLICIES[args.policy_context](),
         )
     except (AdapterConfigError, ProviderError) as error:
         raise ValueError(str(error)) from None

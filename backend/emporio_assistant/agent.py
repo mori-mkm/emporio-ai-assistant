@@ -25,6 +25,7 @@ from .generation import (
     ToolCall,
     ToolResult,
 )
+from .policy_context import FullManual, PolicySelection
 from .tools import CatalogSnapshot, call_tool, tool_schemas, validated_arguments
 
 
@@ -64,6 +65,7 @@ class TurnResult:
     op_ids: list[str] = field(default_factory=list)
     dropped_sections: list[str] = field(default_factory=list)  # first 10, see extract_sources
     call_metrics: list[dict] = field(default_factory=list)  # local-model counters per call
+    policy_context: dict = field(default_factory=dict)  # manual sections given to the model
 
 
 INSTRUCTIONS = """\
@@ -135,12 +137,25 @@ PUBLIC_MESSAGES = {
 SOURCE_LINE = re.compile(r"\n?[ \t]*\[(?:fontes?|sources?)\s*:([^\]\n]*)\][ \t]*$", re.IGNORECASE)
 
 
-def render_manual(snapshot: CatalogSnapshot) -> str:
+def render_manual(snapshot: CatalogSnapshot, selection: PolicySelection | None = None) -> str:
+    """The whole manual (baseline, unchanged) or, for a retrieval selection, only the selected
+    sections with a header saying how many of the manual's sections are present."""
     policies = snapshot.policies()
-    parts = [
-        f'<store_manual file="{policies["source"]["file_name"]}" data_generation="{snapshot.id}">'
-    ]
-    for s in policies["sections"]:
+    file_name = policies["source"]["file_name"]
+    opening = f'<store_manual file="{file_name}" data_generation="{snapshot.id}"'
+    sections = policies["sections"]
+    if selection is None or selection.mode == "full":
+        parts = [opening + ">"]
+    else:
+        wanted = set(selection.section_ids)
+        sections = [s for s in sections if s["id"] in wanted]
+        parts = [
+            opening + f' context="{selection.mode} excerpt" '
+            f'sections="{len(sections)} of {len(policies["sections"])}">'
+        ]
+        if not sections:
+            parts.append("(no manual section was retrieved for this message)")
+    for s in sections:
         pages = _pages(s)
         title = s["title"] or "Capa"
         parts.append(
@@ -155,25 +170,31 @@ def _pages(section: dict) -> str:
     return str(start) if start == end else f"{start}-{end}"
 
 
-def build_system(snapshot: CatalogSnapshot) -> str:
-    return INSTRUCTIONS + "\n\n" + render_manual(snapshot)
+def build_system(snapshot: CatalogSnapshot, selection: PolicySelection | None = None) -> str:
+    return INSTRUCTIONS + "\n\n" + render_manual(snapshot, selection)
 
 
-def config_version(generator: Generator, config: AgentConfig) -> str:
+def config_version(generator: Generator, config: AgentConfig, policy=None) -> str:
     describe = getattr(generator, "describe", lambda: {"mode": generator.mode})()
-    blob = json.dumps(
-        [INSTRUCTIONS, describe, asdict(config), tool_schemas()], sort_keys=True, ensure_ascii=False
-    )
+    parts = [INSTRUCTIONS, describe, asdict(config), tool_schemas()]
+    if policy is not None and policy.mode != "full":  # the full-manual hash stays as it was
+        parts.append(policy.describe())
+    blob = json.dumps(parts, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
-def extract_sources(text: str, snapshot: CatalogSnapshot) -> tuple[str, list[dict], list[str]]:
-    """Strip the trailing citation line; keep only section ids that exist in this generation.
-    Also returns the dropped ids (model text, each cut to 40 chars)."""
+def extract_sources(
+    text: str, snapshot: CatalogSnapshot, allowed: set[str] | None = None
+) -> tuple[str, list[dict], list[str]]:
+    """Strip the trailing citation line; keep only section ids that exist in this generation
+    and, when `allowed` is given, that were in the context the model received. Also returns
+    the dropped ids (model text, each cut to 40 chars)."""
     match = SOURCE_LINE.search(text)
     if not match:
         return text, [], []
-    sections = {s["id"]: s for s in snapshot.policies()["sections"]}
+    sections = {
+        s["id"]: s for s in snapshot.policies()["sections"] if allowed is None or s["id"] in allowed
+    }
     sources, dropped, seen = [], [], set()
     for raw in match.group(1).split(","):
         section_id = raw.strip().lstrip("§").strip()
@@ -220,10 +241,11 @@ def _tool_step(call: int, tool: ToolCall, outcome: dict) -> dict:
 
 
 class Agent:
-    def __init__(self, generator: Generator, config: AgentConfig = AgentConfig()):
+    def __init__(self, generator: Generator, config: AgentConfig = AgentConfig(), policy=None):
         self.generator = generator
         self.config = config
-        self.version = config_version(generator, config)
+        self.policy = policy if policy is not None else FullManual()
+        self.version = config_version(generator, config, self.policy)
 
     def run_turn(
         self,
@@ -232,15 +254,20 @@ class Agent:
         user_text: str,
         context: CallContext,
         trace: list | None = None,
+        tool_call=call_tool,
     ) -> TurnResult:
         """`trace` (evaluation runs only) receives, in order, each model call and each tool call
-        with its validated arguments and public result, bounded by TRACE_LIMIT_CHARS."""
+        with its validated arguments and public result, bounded by TRACE_LIMIT_CHARS.
+        `tool_call` is `tools.call_tool` except in evaluation fixtures (runner only)."""
         cfg = self.config
         if not user_text.strip() or len(user_text) > cfg.max_user_chars:
             raise TurnError("invalid_message")
         if len(history) + 2 > cfg.max_history_messages:
             raise TurnError("conversation_limit")
-        system = build_system(snapshot)
+        selection = self.policy.select(snapshot, history, user_text)
+        policy_record = selection.record({s["id"]: s for s in snapshot.policies()["sections"]})
+        allowed = None if selection.mode == "full" else set(selection.section_ids)
+        system = build_system(snapshot, selection)
         tools = tool_schemas()
         messages = [*history, {"role": "user", "content": user_text}]
         context = replace(context, config_version=self.version, data_version=snapshot.id)
@@ -255,6 +282,7 @@ class Agent:
                 tools_used=used,
                 op_ids=ops,
                 call_metrics=metrics,
+                policy_context=policy_record,
             )
 
         while True:
@@ -298,7 +326,7 @@ class Agent:
                         }
                     else:
                         seen.add(key)
-                        outcome = call_tool(snapshot, tool.name, tool.arguments)
+                        outcome = tool_call(snapshot, tool.name, tool.arguments)
                     used.append(tool.name)
                     if trace is not None:
                         trace.append(_tool_step(calls, tool, outcome))
@@ -318,12 +346,13 @@ class Agent:
 
             text = reply.text.strip()
             if reply.stop == END_TURN and text:
-                body, sources, dropped = extract_sources(text, snapshot)
+                body, sources, dropped = extract_sources(text, snapshot, allowed)
                 if not body:
                     return stop("incomplete", "incomplete")
                 return TurnResult(
-                    "answered", body, sources, calls, used, len(dropped), ops, dropped[:10], metrics
-                )
+                    "answered", body, sources, calls, used, len(dropped), ops, dropped[:10],
+                    metrics, policy_record,
+                )  # fmt: skip
             if reply.stop == REFUSAL:
                 return stop("refused", "refused")
             if reply.stop == MAX_TOKENS:

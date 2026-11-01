@@ -149,6 +149,10 @@ class SessionStore:
     def __len__(self) -> int:
         return len(self._sessions)
 
+    def __contains__(self, session_id: object) -> bool:
+        with self._lock:
+            return session_id in self._sessions
+
 
 class SimulatedGenerator:
     """Explicit offline provider: controlled test replies through the real loop and tools.
@@ -185,9 +189,10 @@ class AssistantService:
         store: SessionStore | None = None,
         budget: str = "development",
         run_cap_micro_usd: int | None = None,
+        policy=None,  # policy_context selector; None = full manual (baseline)
     ):
         self.mode = generator.mode
-        self.agent = Agent(generator, config)
+        self.agent = Agent(generator, config, policy)
         self.data_dir = data_dir
         self.store = store if store is not None else SessionStore()
         self.budget = budget
@@ -217,11 +222,13 @@ class AssistantService:
         scenario_id: str | None = None,
         diagnostics: dict | None = None,
         trace: bool = False,
+        tool_call=None,
     ) -> dict:
         """Public reply only. `diagnostics` (runner use; the API never passes it) receives the
         turn status, model calls, tools, citations and ledger op ids; with `trace` also the
         ordered model/tool steps, kept there even when the turn fails. None of it enters the
-        public reply."""
+        public reply. `tool_call` replaces `tools.call_tool` for one evaluation scenario
+        (runner fixtures only; the API never passes it)."""
         session = self.store.get(session_id)
         if not session.lock.acquire(blocking=False):
             raise PublicError(
@@ -234,7 +241,9 @@ class AssistantService:
                     raise cached
                 return cached
             try:
-                reply = self._turn(session, text, request_id, scenario_id, diagnostics, trace)
+                reply = self._turn(
+                    session, text, request_id, scenario_id, diagnostics, trace, tool_call
+                )
             except PublicError as error:
                 if error.code not in ("session_busy", "data_changed"):
                     self._remember(session, request_id, error)
@@ -258,8 +267,10 @@ class AssistantService:
         scenario_id: str | None,
         diagnostics: dict | None = None,
         trace: bool = False,
+        tool_call=None,
     ) -> dict:
         steps = None
+        extra = {"tool_call": tool_call} if tool_call is not None else {}
         if trace and diagnostics is not None:
             steps = diagnostics["trace"] = []
         with self._snapshot() as snapshot:
@@ -277,7 +288,9 @@ class AssistantService:
                 run_cap_micro_usd=self.run_cap_micro_usd,
             )
             try:
-                result = self.agent.run_turn(snapshot, session.history, text, context, steps)
+                result = self.agent.run_turn(
+                    snapshot, session.history, text, context, steps, **extra
+                )
             except TurnError as error:
                 status, message = TURN_ERRORS[error.code]
                 raise PublicError(error.code, status, message) from None
@@ -305,6 +318,7 @@ class AssistantService:
                 dropped_sections=list(result.dropped_sections),
                 op_ids=list(result.op_ids),
                 data_generation=snapshot.id,
+                policy_context=dict(result.policy_context),
             )
         if result.status == "answered":
             session.history += [

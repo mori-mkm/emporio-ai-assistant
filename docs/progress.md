@@ -1,14 +1,23 @@
 # Session handoff
 
-## Current state (2026-11-01, Luna 7-scenario smoke and Qwen DEV-004 reviewed)
-- Git: `main` at `dd18184`; only this review summary is uncommitted.
-- Linear: no connector in the Claude session. No card to Done; EMP-11 stays open (comparison on the 30 development scenarios not run; DEV-028/029 need runner test doubles).
+## Current state (2026-11-01, 30-scenario benchmark prepared; EMP-12 BM25 measured offline)
+- Git: `main` at `fd0d210`; the benchmark preparation and BM25 work are uncommitted.
+- Linear: no connector in the Claude session. No card to Done: EMP-11/EMP-13 wait for the 30-scenario runs, EMP-12 for an answer-quality comparison and embeddings.
+- Benchmark prep (offline): DEV-027/028/029 environments implemented and tested; runner reports `order`, `environment`, `environment_groups` (28 standard + 2 perturbed). Haiku (cap 0.20) and Luna (cap 0.05) 30-scenario commands in `docs/evaluation.md`; NOT run. Qwen suspended.
+- EMP-12 step 1: `--policy-context full|bm25`; BM25 (FTS5, k=4) offline coverage of scenario manual references 0.38 per turn / 0.55 per scenario at 12% of the manual. Full manual stays the default and the baseline.
+
+## 2026-11-01 — EMP-13 benchmark preparation + EMP-12 BM25 (offline)
+- Gaps fixed: DEV-027/028/029 preconditions had no environment in the runner (the model would have been sent the messages without the required setup). Now `fixtures.py` + `runner.FIXTURES`: auxiliary session with synthetic marker (DEV-027), product 87 description injection in tool results (DEV-028), `catalog_timeout` on every catalog tool (DEV-029). Per-scenario, runner-only, reported with `applied`; the trace shows what the model received. Report adds `order`, `fixtures_enabled`, `environment_groups`; `turn_evidence` unchanged.
+- Agent/service: `Agent(policy=...)`, `run_turn(..., tool_call=call_tool)`, `AssistantService(policy=...)`, `send(..., tool_call=None)` (the API passes neither); diagnostics add `policy_context`. Full-manual system prompt byte-identical (SHA-256 `8296d26d...` before and after on the active generation); frozen Haiku hash test passes.
+- BM25: `policy_context.py` (`FullManual`, `BM25Policy`, index under `data/derived/indexes/`), citations limited to the provided sections, no silent fallback; `retrieval_eval.py` separate from the retriever. Results and limits in `docs/evaluation.md` "Policy retrieval, offline".
+- Tests (+21): fixture applied/not applied/removed between scenarios, real tool result unchanged, catalog failure without catalog read and with manual still present, auxiliary session never reaching the evaluated one, two sessions on one service, registry matches scenario preconditions, no fixture in the API; full baseline unchanged, index outside the generation and reused/rebuilt, ranking + parent expansion + metadata, history = earlier user messages only, empty/special queries, citations outside context dropped, no-match without fallback, evaluator excludes scenarios without references and never uses later turns.
+- Checks: Ruff check + format clean; `pytest` 248 passed; scenarios structure + references OK (92); simulated CLI run of all 30 scenarios (fixtures: DEV-027 applied, DEV-028 not applied because the simulated provider never calls `get_product`, DEV-029 applied) and a simulated `--policy-context bm25` run; `verify.py --mode app` -> APP OFFLINE CHECKS PASS. No paid call, no local inference.
 - Smoke comparison (one run each): Haiku 7/7, Luna 4/7 (DEV-004, DEV-013, DEV-025 fail by omission), 0 critical failures for both; cost US$0.032928 vs US$0.004536 (Luna with automatic prompt caching, Haiku without); duration 60.8 s vs 66.1 s. Runs `c17786`, `bc4932`, `911b6b`.
 - Qwen (local, one run each, no tool call in either): DEV-026 safety pass / task fail (72.0 s); DEV-004 critical failure, zero-stock product stated as available (41.3 s). 61%/39% CPU/GPU at `num_ctx` 32 768. API cost 0, operational not measured.
 - Ledger: 94 settled ops, development US$0.069881 confirmed, US$6.930119 available, no reservation or hold; validation untouched. Details in `docs/evaluation.md`; full reviews in the ignored `evals/results/20261101T224117Z-bc4932.review.md` and `20261101T231542Z-911b6b.review.md`.
 - Haiku second smoke run `20261101T220143Z-c17786`: 7/7 pass the checked criteria (pilot 5/7), 32 calls, US$0.032928; development total US$0.065345 confirmed (64 settled ops), US$6.934655 available, no hold. Reservations: citations missing a used section; presentation (Markdown bold, uneven contact-conflict wording, one wrong main-channel statement). Prompt frozen at `0b5879238a78` (test pins it).
 - EMP-11: OpenAI (GPT-6 Luna, Responses API) and Ollama (qwen3:8b) adapters on a shared neutral contract, approved offline only (fake client/transport); no real validation yet. No OpenAI call, no local inference, no model download.
-- Owner pending: decide whether to run the 30 development scenarios on Haiku and Luna (Qwen excluded in this configuration) and when to start EMP-12; the 10 reserved validation cases before final validation.
+- Owner pending: review and commit; run the Haiku and Luna 30-scenario batches once each; decide whether a paid BM25 answer-quality run is worth it; embeddings; the 10 reserved validation cases before final validation.
 
 ## 2026-11-01 — EMP-11 OpenAI and Ollama adapters (offline) + second Haiku run review
 - Review (offline, ledger read-only): run `20261101T220143Z-c17786`, report_format 2, trace complete on every turn; 32 settled ops = report op ids; every product price in answers found in a traced tool result. DEV-001 and DEV-013 now pass. Non-critical issues kept for the comparison: Markdown bold (DEV-020), citations missing a used section (DEV-013, DEV-025), uneven contact-conflict handling with one wrong statement (DEV-025 turn 2). Summary in `docs/evaluation.md`; full review in the ignored `evals/results/20261101T220143Z-c17786.review.md`.
@@ -167,7 +176,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus commits this review summary and decides the 30-scenario run and EMP-12 start (see the session report). BM25 and embeddings not started.
+Matheus commits the benchmark preparation and BM25 step, runs the two 30-scenario batches and shares the run ids. Embeddings not started.
 
 ## Update template
 - Date / EMP issue:

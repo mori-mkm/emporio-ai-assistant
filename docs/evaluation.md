@@ -212,5 +212,68 @@ ollama ps
 ollama ps
 ```
 
+## Full development benchmark (EMP-13, prepared, NOT run)
+All 30 development scenarios, one run per scenario and candidate, no automatic repetition. Development scenarios only: the 7 smoke cases are new observations here (earlier runs stay as they are), and none of this is the reserved validation.
+
+Scenario environments (runner only, `backend/emporio_assistant/fixtures.py`; the API, UI and customer text cannot enable them; one instance per scenario, discarded when it ends; real CSVs, catalog and generation untouched):
+- DEV-027 `auxiliary_session` (`session_isolation_setup`): before the evaluated session is created, another session receives synthetic history with a random marker `SINTETICO-AUX-...` (no model call); the evaluated session starts empty. The report records `evaluated_session_empty_at_start`, `marker_in_evaluated_history` and `auxiliary_session_dropped`. Isolation itself is shown by the code path (the agent receives only its own session's history) and offline tests, not by the model's refusal.
+- DEV-028 `product_description_injection` (`tool_result_perturbation`): the scenario's exact text is appended to the description of product 87 in a successful tool result before the model receives it (today only `get_product` returns descriptions); other fields unchanged; the trace shows the injected result. `applied: false` means no tool returned that description, so indirect injection was NOT exercised in that run.
+- DEV-029 `catalog_timeout` (`simulated_tool_failure`): every valid catalog tool call returns the tool error `catalog_timeout` at once (no sleep, no catalog read); invalid calls still get their normal validation error; the manual stays in the prompt. It is a simulated tool failure handled by the normal tool-error path, distinct from a provider timeout (`provider_timeout`, which stops the batch). `triggered_calls: 0` means the model never asked the catalog.
+- Report: `order`, `fixtures_enabled`, per-scenario `environment`, and `environment_groups`: report the 28 `standard` scenarios separately from the 2 `perturbed` resistance tests. A run with a fixture is still real inference (`execution` unchanged); the environment is recorded apart.
+
+Comparable conditions: same prompt (`INSTRUCTIONS`), data generation, tools, commercial rules, full manual (`--policy-context full`), 4 model calls and 8 tool calls per turn, 90 s per turn, 4 096 output tokens, 90k prompt bound, retries 0, fresh session per scenario, trace on, scenario-file order. Provider differences stay: Haiku adaptive thinking `medium` without prompt caching; Luna effort `low`, automatic prompt caching (30 min; a cold cache at the start of the batch, then reads), `service_tier: default`. Cost differences include caching and price, not only the model. Provider caches are not cleared.
+
+Budget: Haiku smoke cost ~US$0.0047 per scenario, so ~US$0.14 expected for 30 (cap 0.20); Luna ~US$0.0006 per scenario, ~US$0.02 expected (cap 0.05). The runner's per-batch ceiling stays US$0.25; a call whose reservation would pass the cap is refused before dispatch, the batch stops and `not_run` lists what did not run. Never split or continue a stopped batch automatically.
+
+Commands (from the repository root, after review and commit; NOT run):
+```powershell
+# Haiku, 30 scenarios, cap US$0.20
+$secure = Read-Host 'ANTHROPIC_API_KEY' -AsSecureString
+$env:ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
+Remove-Variable secure
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --executor live --provider anthropic --policy-context full --confirm-paid-run --trace --batch-cap-usd 0.20 --max-model-calls 4 --max-run-seconds 1800
+Remove-Item Env:ANTHROPIC_API_KEY
+.\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
+.\.venv\Scripts\python.exe -m emporio_assistant.budget summary
+
+# Luna, 30 scenarios, cap US$0.05
+$secure = Read-Host 'OPENAI_API_KEY' -AsSecureString
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
+Remove-Variable secure
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --executor live --provider openai --policy-context full --confirm-paid-run --trace --batch-cap-usd 0.05 --max-model-calls 4 --max-run-seconds 1800
+Remove-Item Env:OPENAI_API_KEY
+.\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
+.\.venv\Scripts\python.exe -m emporio_assistant.budget summary
+```
+Qwen is suspended in this configuration (critical failure on DEV-004, no tool call in two runs).
+
+## Policy retrieval, offline (EMP-12 step 1)
+Variants: A = full manual (baseline, default, unchanged: the full system prompt on the active generation has the same SHA-256 as before, and the frozen Haiku config hash holds). B = BM25 over the same extracted sections. Embeddings are a later step.
+
+Retriever (`policy_context.BM25Policy`, initial configuration, chosen before measuring and not tuned on the results):
+- SQLite 3.45.1 FTS5 (checked available), tokenizer `unicode61 remove_diacritics 2` (case/accent-insensitive, no stemming), columns title (weight 2) and body (weight 1).
+- Query: the current user message plus up to 2 earlier user messages of the same conversation; assistant text, later turns, scenario ids, references and rubric are never used. Folded `\w+` tokens, a small closed list of Portuguese/English function words removed, at most 32 terms, each quoted and joined with OR (FTS operators become plain words).
+- k = 4: the manual has 29 sections and most scenarios cite 1-2; 4 leaves room for related conditions at ~12% of the text. Expansion rule: a retrieved subsection brings its parent section when the parent has text (parents hold the general rule or table); recorded in `expanded`.
+- No match (no terms, or no section contains any term): the manual block holds zero sections and says so; no fallback to the full manual. The bm25 score is lexical relevance, not factual confidence.
+- Index: `data/derived/indexes/policies-bm25-<generation>-<policies sha256[:12]>.sqlite` (ignored), metadata (format, generation, policies hash, tokenizer, build time) checked on every use; rebuilt when stale; written to a temp file and renamed.
+
+Evaluation (`retrieval_eval.py`, separate from the retriever; only it reads the references): per turn, retrieved sections vs the scenario's manual references, on the 25 scenarios that have one (5 without a manual reference excluded, not counted as hits). Run once on generation `20261101T125243264432Z-10abfa` (`evals/results/retrieval-bm25-20261101T233836Z.json`):
+
+| Measure | Value |
+|---|---|
+| Turns scored | 39 (25 scenarios) |
+| Mean per-turn reference coverage | 0.38 |
+| Turns with all references / none | 11 / 21 |
+| Turns with no match at all | 10 |
+| Mean scenario coverage (union of its turns) | 0.55 (11/25 complete) |
+| Sections per turn (with expansion) | 3.2 |
+| Context per turn | 1 382 characters, 12% of the 11 672-character manual |
+| Query time | mean 1.2 ms, max 16 ms; index build 16 ms (29 sections, once per generation) |
+| Coverage by language | pt-BR 0.40 (33 turns), en 0.28 (6 turns) |
+
+Observed causes (one configuration, no tuning): no stemming ("devolver" does not match "devolução", so DEV-013 turn 1 misses §4.1); English questions against a Portuguese manual (DEV-021, DEV-027 §9 privacy: no match); product questions with no policy words retrieve nothing although their references point to general rules (§7.1 consult-the-system, §7.3, §6.2); scope requests worded differently from the manual (DEV-023 "encordoamento" vs "cordas"). Hits are good where the customer uses the manual's words (payment, PIX, shipping, hours, warranty).
+
+Limits: references are per scenario, not per turn, and mark where evidence is, not the full set a good answer needs; coverage is a proxy, not evidence that the context is sufficient or that answers stay correct. Answer quality with BM25 is unmeasured (no model call). With the full manual at ~4.7-8k tokens and cheap with caching, BM25 would need to preserve quality to be worth it; this first measurement does not show that. Integration is covered by offline tests with fake generators.
+
 ## Evidence storage
 Sanitize logs; don't export secrets, customer PII or reserved-case answers. Save development reports with real measurements, model-config metadata and trace IDs where appropriate. A mock/demo report must visibly say SIMULATED. Never reconstruct supposedly observed tool results from the expected labels.
