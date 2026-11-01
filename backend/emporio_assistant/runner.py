@@ -48,6 +48,17 @@ class Executor:
     configuration: dict | None = None  # agent + model settings recorded in the report
     ledger_report: Callable[[str], dict] | None = None  # run_id -> ledger view after the run
     trace: bool = False  # per-turn model/tool steps recorded
+    execution: str = "simulated"  # simulated | local_inference | paid_api
+    runtime_report: Callable[[], dict] | None = None  # local model state (version, ollama ps)
+
+
+EXECUTION = {"live": "paid_api", "local": "local_inference", "simulated": "simulated"}
+NOTICES = {
+    "simulated": "SIMULATED run: no model was called; outputs are placeholders, not agent answers.",
+    "local_inference": "Local model run (real inference on this machine, no API cost); outputs "
+    "are recorded as returned.",
+    "paid_api": "Model run; outputs are recorded as returned.",
+}
 
 
 REPORT_FORMAT = 2  # 1 = no format field: no sources, dropped ids or trace per turn
@@ -100,7 +111,7 @@ def service_executor(service, run_id: str, trace: bool = False) -> Executor:
     ledger = getattr(generator, "ledger", None)
     return Executor(
         name=f"assistant-service-{service.mode}",
-        simulated=service.mode != "live",
+        simulated=service.mode == "simulated",
         provider=describe.get("provider"),
         model=describe.get("model"),
         config_version=service.agent.version,
@@ -108,6 +119,8 @@ def service_executor(service, run_id: str, trace: bool = False) -> Executor:
         configuration={"generator": describe, "agent": asdict(service.agent.config)},
         ledger_report=ledger.run_report if ledger is not None else None,
         trace=trace,
+        execution=EXECUTION[service.mode],
+        runtime_report=getattr(generator, "runtime", None),
     )
 
 
@@ -148,6 +161,7 @@ def run(
     chosen = select(data, ids, smoke)
     started_at = datetime.now(UTC)
     run_id = run_id or new_run_id(executor.simulated)
+    runtime_before = _runtime(executor)
     run_started = time.monotonic()
 
     deadline = None if max_run_s is None else run_started + max_run_s
@@ -205,12 +219,9 @@ def run(
         "report_format": REPORT_FORMAT,
         "run_id": run_id,
         "simulated": executor.simulated,
+        "execution": executor.execution,
         "trace_enabled": executor.trace,
-        "notice": (
-            "SIMULATED run: no model was called; outputs are placeholders, not agent answers."
-            if executor.simulated
-            else "Model run; outputs are recorded as returned."
-        ),
+        "notice": NOTICES[executor.execution],
         "graded": False,
         "executor": executor.name,
         "provider": executor.provider,
@@ -236,10 +247,23 @@ def run(
             report["ledger"] = executor.ledger_report(run_id)
         except BudgetError as error:
             report["ledger"] = {"error": str(error)}
+    if executor.execution == "local_inference":
+        # No ledger operation exists for local inference: nothing paid, nothing fictitious.
+        report["cost"] = {"api_usd": 0, "operational": "not measured"}
+        report["runtime"] = {"before": runtime_before, "after": _runtime(executor)}
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{run_id}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _runtime(executor: Executor) -> dict | None:
+    if executor.runtime_report is None:
+        return None
+    try:
+        return executor.runtime_report()
+    except Exception as error:  # recorded, never invented
+        return {"error": getattr(error, "code", type(error).__name__)}
 
 
 def _ms(start: float) -> int:
@@ -274,11 +298,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument(
         "--executor",
-        choices=["placeholder", "simulated", "live"],
+        choices=["placeholder", "simulated", "live", "local"],
         default="placeholder",
         help="placeholder: no service; simulated: full service with the simulated provider; "
-        "live: real Claude calls (paid, needs --confirm-paid-run)",
+        "live: real paid API calls (needs --confirm-paid-run and --batch-cap-usd); "
+        "local: real inference on the local Ollama model (no API cost)",
     )
+    parser.add_argument(
+        "--provider",
+        choices=["anthropic", "openai"],
+        default="anthropic",
+        help="paid provider for --executor live",
+    )
+    parser.add_argument("--num-ctx", type=int, default=None, help="local: Ollama context")
+    parser.add_argument("--num-predict", type=int, default=None, help="local: output tokens")
     parser.add_argument("--confirm-paid-run", action="store_true")
     parser.add_argument(
         "--trace",
@@ -312,7 +345,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as error:
         print(f"FAILED: {error}")
         return 1
-    label = "SIMULATED run" if executor.simulated else "LIVE run (real model calls)"
+    label = {
+        "simulated": "SIMULATED run",
+        "local_inference": "LOCAL run (real inference, no API cost)",
+        "paid_api": "LIVE run (real paid model calls)",
+    }[executor.execution]
     print(f"{label} written to {path} (nothing graded)")
     return 0
 
@@ -321,8 +358,8 @@ def _service_executor(args) -> tuple[Executor, str]:
     from dataclasses import replace as with_changes
 
     from .agent import AgentConfig
-    from .anthropic_adapter import AdapterConfigError
-    from .assistant import Settings, build_service
+    from .assistant import Settings, build_service, make_generator
+    from .generation import AdapterConfigError, ProviderError
 
     if not 1 <= args.max_model_calls <= 5:
         raise ValueError("--max-model-calls must be between 1 and 5")
@@ -337,13 +374,26 @@ def _service_executor(args) -> tuple[Executor, str]:
         cap_micro = int(cap * 1_000_000)
     else:
         cap_micro = None
-    settings = with_changes(settings, mode="live" if live else "simulated")
+    local = args.executor == "local"
+    if (args.num_ctx or args.num_predict) and not local:
+        raise ValueError("--num-ctx and --num-predict apply to --executor local only")
+    mode = "live" if live else "local" if local else "simulated"
+    provider = {"live": args.provider, "local": "ollama", "simulated": "simulated"}[mode]
+    settings = with_changes(settings, mode=mode, provider=provider)
+    overrides = {
+        k: v for k, v in (("num_ctx", args.num_ctx), ("num_predict", args.num_predict)) if v
+    }
     config = AgentConfig(max_model_calls=args.max_model_calls)
     try:
-        service = build_service(settings, config=config, run_cap_micro_usd=cap_micro)
-    except AdapterConfigError as error:
+        generator = make_generator(settings, **overrides)
+        if local:
+            generator.check_model()  # missing model or another build: refuse, never substitute
+        service = build_service(
+            settings, generator=generator, config=config, run_cap_micro_usd=cap_micro
+        )
+    except (AdapterConfigError, ProviderError) as error:
         raise ValueError(str(error)) from None
-    run_id = new_run_id(not live)
+    run_id = new_run_id(mode == "simulated")
     return service_executor(service, run_id, trace=args.trace), run_id
 
 

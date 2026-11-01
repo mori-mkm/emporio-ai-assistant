@@ -15,6 +15,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from .budget import CallRequest, CallResult, Ledger, guarded_call
+from .generation import (  # noqa: F401  (re-exported: earlier import path)
+    END_TURN,
+    MAX_TOKENS,
+    OTHER,
+    REFUSAL,
+    TOOL_USE,
+    AdapterConfigError,
+    CallContext,
+    ModelReply,
+    PromptTooLarge,
+    ToolCall,
+)
 from .pricing import PriceTable
 
 MODEL = "claude-haiku-5-5"
@@ -23,14 +35,6 @@ API_KEY_ENV = "ANTHROPIC_API_KEY"  # read by this process only; never logged or 
 TOOL_SYSTEM_PROMPT_TOKENS = 286
 # Margin for role/message framing and request configuration rendered into the prompt.
 REQUEST_OVERHEAD_TOKENS = 1_000
-
-
-class AdapterConfigError(Exception):
-    """Live generation cannot be enabled with the current configuration."""
-
-
-class PromptTooLarge(Exception):
-    """The conservative prompt bound is above the configured limit; nothing was sent."""
 
 
 @dataclass(frozen=True)
@@ -44,22 +48,60 @@ class GenerationSettings:
     call_timeout_s: float = 60.0
 
 
-@dataclass(frozen=True)
-class CallContext:
-    run_id: str
-    scenario_id: str | None = None
-    config_version: str = "unversioned"
-    data_version: str = "unknown"
-    budget: str = "development"
-    run_cap_micro_usd: int | None = None
-    timeout_s: float = 60.0  # remaining turn time; the call timeout is the smaller value
+STOPS = {
+    "tool_use": TOOL_USE,
+    "end_turn": END_TURN,
+    "stop_sequence": END_TURN,
+    "refusal": REFUSAL,
+    "max_tokens": MAX_TOKENS,
+    "model_context_window_exceeded": MAX_TOKENS,
+}
 
 
-@dataclass(frozen=True)
-class ModelReply:
-    content: list[dict]  # blocks as plain dicts, passed back unchanged within a tool loop
-    stop_reason: str | None
-    op_id: str | None = None  # ledger operation, for run reports only
+def to_messages(messages: list[dict]) -> list[dict]:
+    """Neutral conversation -> Messages API. A tool-requesting reply is replayed from its own
+    content blocks (thinking + tool_use, unchanged); tool results become tool_result blocks."""
+    out = []
+    for m in messages:
+        if m["role"] == "tool_results":
+            out.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": r.tool_call_id,
+                            "content": r.content,
+                            "is_error": r.is_error,
+                        }
+                        for r in m["results"]
+                    ],
+                }
+            )
+        elif "tool_calls" in m:
+            blocks = m["state"]
+            if blocks is None:  # not produced by this adapter: rebuild without thinking
+                blocks = [{"type": "text", "text": m["text"]}] if m["text"] else []
+                blocks += [
+                    {"type": "tool_use", "id": c.id, "name": c.name, "input": c.arguments}
+                    for c in m["tool_calls"]
+                ]
+            out.append({"role": "assistant", "content": blocks})
+        else:
+            out.append({"role": m["role"], "content": m["content"]})
+    return out
+
+
+def from_content(content: list[dict], stop_reason: str | None, op_id: str | None) -> ModelReply:
+    text = "".join(b.get("text", "") for b in content if b.get("type") == "text")
+    calls = [
+        ToolCall(str(b.get("id")), str(b.get("name")), b.get("input"))
+        for b in content
+        if b.get("type") == "tool_use"
+    ]
+    return ModelReply(
+        text, calls, STOPS.get(stop_reason, OTHER), content, op_id, raw_stop=stop_reason
+    )
 
 
 def prompt_token_bound(
@@ -194,6 +236,7 @@ class AnthropicGenerator:
         self, *, system: str, messages: list[dict], tools: list[dict], context: CallContext
     ) -> ModelReply:
         s = self.settings
+        messages = to_messages(messages)
         bound = prompt_token_bound(system, messages, tools, s.max_output_tokens)
         if bound > s.max_prompt_tokens:
             raise PromptTooLarge(f"prompt bound {bound} > {s.max_prompt_tokens}")
@@ -236,4 +279,4 @@ class AnthropicGenerator:
 
         message = guarded_call(self.ledger, self.pricing, request, call).value
         content = [block.model_dump(mode="json", exclude_none=True) for block in message.content]
-        return ModelReply(content, message.stop_reason, request.op_id)
+        return from_content(content, message.stop_reason, request.op_id)

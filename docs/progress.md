@@ -1,11 +1,21 @@
 # Session handoff
 
-## Current state (2026-11-01, post-pilot prompt rules + evaluation trace; second smoke run NOT run)
-- Git: `main` at `f2ac698`; pilot-review docs and this iteration are uncommitted (Matheus stages/commits).
-- Linear: no connector in the Claude session; proposed EMP-9/EMP-13 updates in the session report. No card to Done.
-- Pilot (measured, unchanged): 7/7 scenarios ran every turn (14/14 `answered`), 32 calls settled, US$0.032417, no hold; development budget available US$6.967583. Assessed: 5/7 pass the checked criteria; DEV-001 (unsourced size classification) and DEV-013 (turn 1 `ask` not met) fail; no listed critical failure; sources and tool trajectory not evaluable (not recorded).
-- This iteration: general prompt rules (new hash `0b5879238a78`), sources/dropped citations in every report, opt-in `runner --trace`. Offline only; whether the new rules help is unknown until the next real run.
-- Owner pending: review and commit; run the second smoke run once (`docs/evaluation.md` "Second smoke run"); the 10 reserved validation cases before final validation.
+## Current state (2026-11-01, second Haiku smoke run reviewed; EMP-11 adapters offline, NOT run)
+- Git: `main` at `e5f00c3`; the review summary and EMP-11 are uncommitted (Matheus stages/commits).
+- Linear: no connector in the Claude session; proposed EMP-9/EMP-11/EMP-13 texts in the session report. No card to Done; EMP-11 stays open until the real runs.
+- Haiku second smoke run `20261101T220143Z-c17786`: 7/7 pass the checked criteria (pilot 5/7), 32 calls, US$0.032928; development total US$0.065345 confirmed (64 settled ops), US$6.934655 available, no hold. Reservations: citations missing a used section; presentation (Markdown bold, uneven contact-conflict wording, one wrong main-channel statement). Prompt frozen at `0b5879238a78` (test pins it).
+- EMP-11: OpenAI (GPT-6 Luna, Responses API) and Ollama (qwen3:8b) adapters on a shared neutral contract, approved offline only (fake client/transport); no real validation yet. No OpenAI call, no local inference, no model download.
+- Owner pending: review and commit; one Luna smoke (DEV-001, cap US$0.05) and one Qwen smoke (DEV-026, then DEV-001) with the commands in `docs/evaluation.md` "Model comparison runs"; the 10 reserved validation cases before final validation.
+
+## 2026-11-01 — EMP-11 OpenAI and Ollama adapters (offline) + second Haiku run review
+- Review (offline, ledger read-only): run `20261101T220143Z-c17786`, report_format 2, trace complete on every turn; 32 settled ops = report op ids; every product price in answers found in a traced tool result. DEV-001 and DEV-013 now pass. Non-critical issues kept for the comparison: Markdown bold (DEV-020), citations missing a used section (DEV-013, DEV-025), uneven contact-conflict handling with one wrong statement (DEV-025 turn 2). Summary in `docs/evaluation.md`; full review in the ignored `evals/results/20261101T220143Z-c17786.review.md`.
+- Contract (`generation.py`): `ToolCall`, `ToolResult`, `ModelReply` (text, tool calls, neutral stop, private provider `state`, op id, raw stop, metrics), `CallContext`, `AdapterConfigError`, `PromptTooLarge`, `ProviderError`. The agent keeps neutral messages; each adapter converts them (Anthropic blocks never reach another provider; provider items replayed only by their own adapter and never traced). Anthropic request shape unchanged.
+- OpenAI (`openai_adapter.py`, SDK `openai==3.42.1`): Responses API, `gpt-6-luna`, `reasoning.effort: low`, `max_output_tokens` 4096, 60 s, SDK retries 0, `store: false` (encrypted reasoning replayed), `truncation: disabled`; every call through `guarded_call`; usage mapped without double counting cache or reasoning; missing fields hold. Price entry `config/pricing.json` `2026-11-01.2`.
+- Ollama (`ollama_adapter.py`, stdlib HTTP): loopback-only URL, `qwen3:8b` with digest prefix check (no substitution), `think: false`, explicit `num_ctx` 32768 / `num_predict` 2048 / 300 s, one inference at a time, oversize prompt refused (no truncation); per-call load/prompt/eval/total durations and counts; runner records version, installed digest and `/api/ps` before/after. Report: `execution: local_inference`, API cost 0, operational cost not measured, no ledger.
+- Selection: `EMPORIO_ASSISTANT_MODE` + `EMPORIO_PROVIDER` / `EMPORIO_OLLAMA_URL` (backend env), runner `--executor live --provider openai` or `--executor local`. Existing commands unchanged.
+- Tests (+36: 16 OpenAI with real SDK response objects on a fake client, 16 Ollama on a fake transport, 4 runner): round trips with preserved call ids, multi-tool order, invalid/unknown tools, incomplete/refusal/failed/empty, timeout uncertain without retry, usage mapping and holds, missing key, oversize prompt not sent, model mismatch, busy lock, labels paid/simulated/local, CLI refusals, frozen Haiku hash.
+- Checks: Ruff check + format clean; `pytest` 227 passed; scenarios structure + references OK (92 checks); simulated CLI run OK; `verify.py --mode app` -> APP OFFLINE CHECKS PASS. No paid call, no local inference.
+- Limits: Luna `low` is not Haiku `medium`; 4096 output may cut Luna reasoning (`incomplete`); requests send `service_tier: "default"` and any other or unreported returned tier holds, as does an omitted `cache_write_tokens`; Qwen fit/offload/speed unmeasured; the byte bound may refuse DEV-001 turn 2 at 32768, which shows the adapter's conservative estimate, not a model or GPU limit.
 
 ## 2026-11-01 — EMP-9 prompt rules and EMP-13 evaluation trace (offline, after the pilot)
 - Failures addressed (from the pilot reviews): unsourced attribute inferred from a measurement (DEV-001); missing fact not asked before a conditional policy (DEV-013); snapshot stock worded as current (DEV-001/004/025); alternatives not comparable in price (DEV-004); conflicting contacts given without saying so (DEV-004/013/025).
@@ -154,7 +164,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews the pilot-prep changes, resolves the prerequisites, runs batch 1 (DEV-001) and shares the run id for review before batch 2. Luna/Qwen adapters, BM25 and embeddings not started.
+Matheus reviews and commits EMP-11, then runs the Luna smoke and the Qwen smoke separately and shares the run ids for review. BM25 and embeddings not started.
 
 ## Update template
 - Date / EMP issue:

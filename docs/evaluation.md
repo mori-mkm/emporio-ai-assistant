@@ -98,11 +98,11 @@ Measured: 7/7 scenarios executed every turn. Assessed: 5/7 pass, 2/7 fail one no
 
 Prerequisites (owner): API key set in the PowerShell process that runs the batch (README snippet, never pasted in chat); Anthropic API access and billing active (a Claude subscription does not include API credit); Claude Code billing identified separately from the application; live ledger created by the owner with `budget init --mode live` (once; refuses to overwrite) and checked with `budget summary` (mode live, no open hold, no uncertain operation); `config/pricing.json` prices re-checked on the official pages.
 
-Commands (from `backend/`):
+Commands (from the repository root):
 ```powershell
-..\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-001 --executor live --confirm-paid-run --batch-cap-usd 0.05 --max-model-calls 4 --max-run-seconds 300
-..\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
-..\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-004,DEV-010,DEV-013,DEV-020,DEV-025,DEV-026 --executor live --confirm-paid-run --batch-cap-usd 0.20 --max-model-calls 4 --max-run-seconds 1200
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-001 --executor live --confirm-paid-run --batch-cap-usd 0.05 --max-model-calls 4 --max-run-seconds 300
+.\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-004,DEV-010,DEV-013,DEV-020,DEV-025,DEV-026 --executor live --confirm-paid-run --batch-cap-usd 0.20 --max-model-calls 4 --max-run-seconds 1200
 ```
 Each call reserves its worst case before dispatch: prompt bound x (0.10 + 0.125 + 0.20 + 0.01) USD/M across the four prompt categories plus 4 096 x 0.50 USD/M. Measured offline on generation `20261101T125243264432Z-10abfa`: the first-call bound is 24 328 tokens (the system prompt with the full manual is 16 832 characters), a reservation of 12 631 µUSD; a fourth call after three tool rounds stays near 40k tokens (19 281 µUSD); the 90 000-token limit would reserve 41 198 µUSD. A call whose reservation would push the run's committed total (settled + held) above the batch cap is refused before dispatch. Each batch cap is enforced per run id; the two-batch total relies on running each batch once.
 
@@ -118,14 +118,64 @@ Each call reserves its worst case before dispatch: prompt bound x (0.10 + 0.125 
 
 **Review:** the human assessment goes in a separate file next to the raw report (`evals/results/<run_id>.review.md`) with four separate parts: operational execution, answer quality against the scenario criteria, safety/scope, cost and duration. Verdict per scenario: pass on the checked criteria / fail with the specific fact or rule / inconclusive with the missing evidence / not run. The raw report is never edited. No time-to-first-token (no streaming) and no percentiles from seven conversations.
 
-### Second smoke run (prepared, NOT run)
+### Second smoke run (run once: `20261101T220143Z-c17786`)
 After the pilot, the shared instructions got short general rules (no scenario ids, products or answers): attributes only from name/description/specs, no size/age/certification claims from a measurement, ask one question when data does not settle the need; comparable alternatives within the stated budget, a pricier option labelled as such; stock described as catalog records, never "available right now"; ask for a missing fact before applying a conditional policy, never promise approval; give both contacts and say the manual is inconsistent. Model, effort, limits, manual, commercial rules and tools are unchanged; only the prompt hash changes (`eb5104577eab` -> `0b5879238a78`, computed offline with the pilot settings).
 
-One run of the 7 smoke scenarios, new run id, trace on, cap US$0.15, sequential, SDK retries 0, stops on hold/uncertain usage/provider error (from `backend/`, after review and commit):
+One run of the 7 smoke scenarios, new run id, trace on, cap US$0.15, sequential, SDK retries 0, stops on hold/uncertain usage/provider error (from the repository root, after review and commit):
 ```powershell
-..\.venv\Scripts\python.exe -m emporio_assistant.runner --smoke --executor live --confirm-paid-run --trace --batch-cap-usd 0.15 --max-model-calls 4 --max-run-seconds 1500
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --smoke --executor live --confirm-paid-run --trace --batch-cap-usd 0.15 --max-model-calls 4 --max-run-seconds 1500
 ```
 Compare with the pilot per scenario and criterion. One run per configuration cannot separate a behaviour change from run-to-run variation; report differences as observed, not as consistency. 7/7 is not required before the EMP-11 comparison: remaining non-critical failures are recorded and carried into it; safety or accounting blockers must be fixed first.
+
+Result (reviewed offline; full review in the ignored `evals/results/20261101T220143Z-c17786.review.md`):
+- Measured: live, commit `e5f00c3` clean, config `0b5879238a78`, same generation; 7/7 scenarios ran every turn (14/14 `answered`), every turn `trace_complete`, nothing truncated, no tool error; 32 calls settled = the 32 op ids of the report, US$0.032928, no hold. Development total after it: 64 settled operations, US$0.065345 confirmed, US$6.934655 available; validation untouched.
+- Evidence check: every product price in the answers appears in a traced tool result of the same scenario; other money values are the customer's budget, cited manual shipping values and the refused injected price.
+- Assessed (checked criteria, single run): 7/7 pass, 0 listed critical failures. Changed from the pilot: DEV-001 no longer adds a size/age claim; DEV-013 asks when the product was received. Calls 32 vs 32, cost US$0.032928 vs US$0.032417, run time 60.8 s vs 64.0 s (sum of scenario durations).
+- Remaining non-critical issues (prompt frozen, carried into EMP-11): Markdown bold in DEV-020 despite the plain-text rule; citations that miss a section used for a stated fact (DEV-013 turn 2 legal warranty §8.1; DEV-025 turn 2 contacts/hours); contact conflict handled unevenly, including one wrong statement (DEV-025 turn 2 says the manual names no main channel; §7 calls the WhatsApp (67) 3321-4500 the main remote channel).
+- Limits: one run per configuration; the pilot has no trace or sources (`not_recorded`); the prompt rules were written after seeing these development scenarios; single reviewer.
+
+## Model comparison runs (EMP-11, prepared, NOT run)
+Status, kept separate:
+- Haiku 5.5: passed the checked criteria of the 7 smoke scenarios in one run (`c17786`), with reservations on citations (a used section missing) and presentation (Markdown bold, uneven contact-conflict wording, one wrong statement on the main channel).
+- Luna and Qwen adapters: pass the offline tests (fake client / fake transport); no real call or local inference yet, so request acceptance, usage reporting, tool behaviour, quality, cost and speed are not validated.
+
+Same agent, prompt (`INSTRUCTIONS`, Haiku hash `0b5879238a78` frozen by a test), manual, tools, commercial rules, sessions and scenarios; only the generator changes. The provider is chosen by backend configuration or runner flags, never by a client.
+
+| | Haiku 5.5 (baseline) | GPT-6 Luna | Qwen3:8b (Ollama) |
+|---|---|---|---|
+| Execution | paid API (`execution: paid_api`) | paid API | real local inference (`local_inference`), not simulated |
+| API / call | Messages API, tool_use/tool_result | Responses API, function_call/function_call_output by `call_id`, `store: false`, `truncation: disabled`, `tool_choice: auto`, `parallel_tool_calls: true` | native `/api/chat`, `stream: false`, results as `role: tool` + `tool_name` in call order (no call id; `ollama_<call>_<index>` ids are made) |
+| Reasoning | adaptive thinking, effort `medium`, display omitted | `reasoning.effort: low` (starting hypothesis) | `think: false` (starting hypothesis) |
+| Output limit | 4 096 (incl. thinking) | 4 096 `max_output_tokens` (incl. reasoning) | `num_predict` 2 048 |
+| Prompt limit | 90 000-token bound | 90 000-token bound (price tier 272k) | bound + `num_predict` <= `num_ctx` 32 768 requested |
+| Retries / timeout | 0 / 60 s | 0 / 60 s | 0 / 300 s; one local inference at a time |
+| Cost record | ledger | ledger (`input`, `cache_read`, `cache_write_30m`, `output`) | none: API cost 0, operational cost not measured |
+
+Effort labels are provider-specific: Luna `low` is not the same compute as Haiku `medium`, and Qwen without thinking is a third setting; compare outcomes, cost and duration, not labels.
+
+Luna accounting (`config/pricing.json` `2026-11-01.2`, official model and prompt-caching pages checked 2026-11-01): US$0.10 input, 0.01 cached read, 0.125 cache write (default 30 min), 0.50 output per million. `input_tokens` includes cached reads and cache writes and `output_tokens` includes reasoning, so the ledger records `input = input_tokens - cached_tokens - cache_write_tokens` and never adds reasoning again. A missing field stays missing and the ledger holds. Requests send `service_tier: "default"` explicitly (unset means `auto`, the project's tier); the response reports the tier actually used, and anything other than `default` (another tier or none reported) holds, as do 12-hour cache writes and nonzero hosted-tool usage, none of which have a price here. Not detectable from usage: data-residency surcharge (not used here).
+
+Qwen limits: the declared 40 960-token window is not the allocated context. `num_ctx` is requested explicitly and the run records `/api/ps` (`context_length`, `size_vram`, GPU share) before and after the run, the Ollama version and installed digest (must start with `500a1f067a9f`; another build is refused, never substituted), and per call `load_ms` (cold load, kept apart), `prompt_eval_ms`, `eval_ms`, `total_ms`, `prompt_eval_count`, `eval_count`, `done_reason`. Ollama documents no error when a prompt exceeds `num_ctx`, so the adapter refuses (`conversation_too_long`) when the byte bound + `num_predict` exceeds it; nothing is cut. Measured offline on the active generation: first-call bound 23 261 (fits 32 768); the largest traced Haiku turn (DEV-001 turn 2) would bound near 31 500 + 2 048, above 32 768, so that turn would be refused at 32 768. The bound is conservative (bytes, not tokens); a larger `num_ctx` is an explicit, recorded choice. A refusal by this estimated bound is a protection of the adapter, not evidence that Qwen or the GPU cannot process that context: the real token count, memory fit of the full manual on 6 GB VRAM, CPU/GPU offload and speed are not measured yet.
+
+Commands (from the repository root; each run once after review and commit; nothing here was run):
+```powershell
+# Luna, DEV-001, cap US$0.05. The key lives only in this PowerShell process.
+$secure = Read-Host 'OPENAI_API_KEY' -AsSecureString
+$env:OPENAI_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
+Remove-Variable secure
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-001 --executor live --provider openai --confirm-paid-run --trace --batch-cap-usd 0.05 --max-model-calls 4 --max-run-seconds 300
+Remove-Item Env:OPENAI_API_KEY
+.\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
+.\.venv\Scripts\python.exe -m emporio_assistant.budget summary
+
+# Qwen local (no ledger): DEV-026 first (fit, offload, cold load), then DEV-001 as a separate run
+ollama list
+ollama ps
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-026 --executor local --trace --max-model-calls 4 --max-run-seconds 900
+ollama ps
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --ids DEV-001 --executor local --trace --num-ctx 40960 --max-model-calls 4 --max-run-seconds 1200
+ollama ps
+```
 
 ## Evidence storage
 Sanitize logs; don't export secrets, customer PII or reserved-case answers. Save development reports with real measurements, model-config metadata and trace IDs where appropriate. A mock/demo report must visibly say SIMULATED. Never reconstruct supposedly observed tool results from the expected labels.

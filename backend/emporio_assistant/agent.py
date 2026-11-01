@@ -15,7 +15,16 @@ import time
 from dataclasses import asdict, dataclass, field, replace
 from typing import Protocol
 
-from .anthropic_adapter import CallContext, ModelReply
+from .generation import (
+    END_TURN,
+    MAX_TOKENS,
+    REFUSAL,
+    TOOL_USE,
+    CallContext,
+    ModelReply,
+    ToolCall,
+    ToolResult,
+)
 from .tools import CatalogSnapshot, call_tool, tool_schemas, validated_arguments
 
 
@@ -54,6 +63,7 @@ class TurnResult:
     dropped_citations: int = 0
     op_ids: list[str] = field(default_factory=list)
     dropped_sections: list[str] = field(default_factory=list)  # first 10, see extract_sources
+    call_metrics: list[dict] = field(default_factory=list)  # local-model counters per call
 
 
 INSTRUCTIONS = """\
@@ -191,16 +201,15 @@ def _bounded(value: object) -> tuple[object, bool]:
     return blob[:TRACE_LIMIT_CHARS], True
 
 
-def _tool_step(call: int, block: dict, outcome: dict) -> dict:
+def _tool_step(call: int, tool: ToolCall, outcome: dict) -> dict:
     """What actually ran: validated arguments (rejected input is never copied) and the public
     result or sanitized error the model received."""
-    name = block.get("name")
-    arguments, cut_args = _bounded(validated_arguments(name, block.get("input")))
+    arguments, cut_args = _bounded(validated_arguments(tool.name, tool.arguments))
     step = {
         "step": "tool",
         "call": call,
-        "tool_use_id": str(block.get("id"))[:64],
-        "name": str(name)[:64],
+        "tool_use_id": tool.id[:64],
+        "name": tool.name[:64],
         "arguments": arguments,
         "ok": outcome["ok"],
     }
@@ -236,11 +245,16 @@ class Agent:
         messages = [*history, {"role": "user", "content": user_text}]
         context = replace(context, config_version=self.version, data_version=snapshot.id)
         deadline = time.monotonic() + cfg.turn_timeout_s
-        calls, used, seen, ops = 0, [], set(), []
+        calls, used, seen, ops, metrics = 0, [], set(), [], []
 
         def stop(status: str, reason: str) -> TurnResult:
             return TurnResult(
-                status, PUBLIC_MESSAGES[reason], model_calls=calls, tools_used=used, op_ids=ops
+                status,
+                PUBLIC_MESSAGES[reason],
+                model_calls=calls,
+                tools_used=used,
+                op_ids=ops,
+                call_metrics=metrics,
             )
 
         while True:
@@ -258,23 +272,21 @@ class Agent:
             calls += 1
             if reply.op_id:
                 ops.append(reply.op_id)
+            if reply.metrics:
+                metrics.append({"call": calls, **reply.metrics})
             if trace is not None:
-                trace.append(
-                    {
-                        "step": "model",
-                        "call": calls,
-                        "op_id": reply.op_id,
-                        "stop": reply.stop_reason,
-                    }
-                )
-            tool_uses = [b for b in reply.content if b.get("type") == "tool_use"]
+                step = {"step": "model", "call": calls, "op_id": reply.op_id, "stop": reply.stop}
+                step["provider_stop"] = reply.raw_stop
+                if reply.metrics:
+                    step["metrics"] = reply.metrics
+                trace.append(step)
 
-            if reply.stop_reason == "tool_use" and tool_uses:
-                if len(used) + len(tool_uses) > cfg.max_tool_calls:
+            if reply.stop == TOOL_USE and reply.tool_calls:
+                if len(used) + len(reply.tool_calls) > cfg.max_tool_calls:
                     return stop("limit_reached", "tool_calls")
                 results = []
-                for block in tool_uses:  # sequential, in the order requested
-                    key = (block.get("name"), json.dumps(block.get("input"), sort_keys=True))
+                for tool in reply.tool_calls:  # sequential, in the order requested
+                    key = (tool.name, json.dumps(tool.arguments, sort_keys=True))
                     if key in seen:
                         outcome = {
                             "ok": False,
@@ -286,35 +298,34 @@ class Agent:
                         }
                     else:
                         seen.add(key)
-                        outcome = call_tool(snapshot, block.get("name"), block.get("input"))
-                    used.append(str(block.get("name")))
+                        outcome = call_tool(snapshot, tool.name, tool.arguments)
+                    used.append(tool.name)
                     if trace is not None:
-                        trace.append(_tool_step(calls, block, outcome))
-                    results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block["id"],
-                            "content": json.dumps(outcome, ensure_ascii=False),
-                            "is_error": not outcome["ok"],
-                        }
-                    )
+                        trace.append(_tool_step(calls, tool, outcome))
+                    content = json.dumps(outcome, ensure_ascii=False)
+                    results.append(ToolResult(tool.id, tool.name, content, not outcome["ok"]))
                 messages += [
-                    {"role": "assistant", "content": reply.content},  # thinking kept unchanged
-                    {"role": "user", "content": results},
+                    # provider items (thinking, reasoning) kept unchanged for this adapter only
+                    {
+                        "role": "assistant",
+                        "text": reply.text,
+                        "tool_calls": reply.tool_calls,
+                        "state": reply.state,
+                    },
+                    {"role": "tool_results", "results": results},
                 ]
                 continue
 
-            text = "".join(b.get("text", "") for b in reply.content if b.get("type") == "text")
-            text = text.strip()
-            if reply.stop_reason in ("end_turn", "stop_sequence") and text:
+            text = reply.text.strip()
+            if reply.stop == END_TURN and text:
                 body, sources, dropped = extract_sources(text, snapshot)
                 if not body:
                     return stop("incomplete", "incomplete")
                 return TurnResult(
-                    "answered", body, sources, calls, used, len(dropped), ops, dropped[:10]
+                    "answered", body, sources, calls, used, len(dropped), ops, dropped[:10], metrics
                 )
-            if reply.stop_reason == "refusal":
+            if reply.stop == REFUSAL:
                 return stop("refused", "refused")
-            if reply.stop_reason in ("max_tokens", "model_context_window_exceeded"):
+            if reply.stop == MAX_TOKENS:
                 return stop("limit_reached", "output")
             return stop("incomplete", "incomplete")

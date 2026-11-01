@@ -1,7 +1,7 @@
 {
-  "pricing_version": "2026-11-01.1",
+  "pricing_version": "2026-11-01.2",
   "fictitious": false,
-  "notice": "Claude API (first-party), global routing, standard service tier, prompts up to 100,000 tokens only. Any other condition reported in usage (long prompt, US-only inference, priority/fast tier, server tools) has no price here and puts the ledger on hold.",
+  "notice": "First-party APIs, standard service tier, global processing (no data residency), prompts below each entry's max_prompt_tokens tier only. Any other condition reported in usage (long prompt, regional/priority/fast/flex tier, server or hosted tools, 12-hour cache writes) has no price here and puts the ledger on hold.",
   "models": [
     {
       "provider": "anthropic",
@@ -10,14 +10,68 @@
       "source": "https://platform.claude.com/docs/en/models/haiku-5-5/overview (Pricing table) and https://platform.claude.com/docs/en/about-claude/pricing",
       "checked_on": "2026-11-01",
       "max_prompt_tokens": 100000,
-      "prompt_categories": ["input", "cache_write_5m", "cache_write_1h", "cache_read"],
-      "required_usage": ["input", "output", "cache_write_5m", "cache_write_1h", "cache_read"],
+      "prompt_categories": [
+        "input",
+        "cache_write_5m",
+        "cache_write_1h",
+        "cache_read"
+      ],
+      "required_usage": [
+        "input",
+        "output",
+        "cache_write_5m",
+        "cache_write_1h",
+        "cache_read"
+      ],
       "categories": {
-        "input": {"usd_per_million": "0.10"},
-        "output": {"usd_per_million": "0.50"},
-        "cache_write_5m": {"usd_per_million": "0.125"},
-        "cache_write_1h": {"usd_per_million": "0.20"},
-        "cache_read": {"usd_per_million": "0.01"}
+        "input": {
+          "usd_per_million": "0.10"
+        },
+        "output": {
+          "usd_per_million": "0.50"
+        },
+        "cache_write_5m": {
+          "usd_per_million": "0.125"
+        },
+        "cache_write_1h": {
+          "usd_per_million": "0.20"
+        },
+        "cache_read": {
+          "usd_per_million": "0.01"
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-6-luna",
+      "unit": "usd_per_million_tokens",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-luna (Pricing) and https://developers.openai.com/api/docs/guides/prompt-caching (usage fields)",
+      "checked_on": "2026-11-01",
+      "max_prompt_tokens": 272000,
+      "prompt_categories": [
+        "input",
+        "cache_read",
+        "cache_write_30m"
+      ],
+      "required_usage": [
+        "input",
+        "output",
+        "cache_read",
+        "cache_write_30m"
+      ],
+      "categories": {
+        "input": {
+          "usd_per_million": "0.10"
+        },
+        "cache_read": {
+          "usd_per_million": "0.01"
+        },
+        "cache_write_30m": {
+          "usd_per_million": "0.125"
+        },
+        "output": {
+          "usd_per_million": "0.50"
+        }
       }
     }
   ]

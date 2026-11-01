@@ -19,21 +19,26 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .agent import Agent, AgentConfig, TurnError
-from .anthropic_adapter import (
+from .anthropic_adapter import AnthropicGenerator
+from .budget import DEFAULT_PATH as LEDGER_PATH
+from .budget import BudgetError, Ledger, UncertainUsage
+from .generation import (
+    END_TURN,
+    TOOL_USE,
     AdapterConfigError,
-    AnthropicGenerator,
     CallContext,
     ModelReply,
     PromptTooLarge,
+    ProviderError,
+    ToolCall,
 )
-from .budget import DEFAULT_PATH as LEDGER_PATH
-from .budget import BudgetError, Ledger, UncertainUsage
 from .pricing import DEFAULT_PATH as PRICING_PATH
 from .pricing import PricingError, load_price_table
 from .tools import DEFAULT_DATA_DIR, CatalogSnapshot, ToolError
 
 log = logging.getLogger(__name__)
-MODES = ("live", "simulated")
+MODES = ("live", "local", "simulated")  # paid API, local inference, scripted test replies
+PROVIDERS = {"live": ("anthropic", "openai"), "local": ("ollama",), "simulated": ("simulated",)}
 
 
 class PublicError(Exception):
@@ -71,13 +76,15 @@ TURN_ERRORS = {
 }
 
 
-def _provider_error(error: UncertainUsage) -> PublicError:
-    import anthropic
-
-    cause = error.__cause__
-    if isinstance(cause, anthropic.APITimeoutError):
+def _provider_error(error: Exception) -> PublicError:
+    """Same public codes for every provider; SDK exception classes are matched by name so no
+    provider SDK has to be imported here."""
+    cause = error.__cause__ if isinstance(error, UncertainUsage) else None
+    name = type(cause).__name__ if cause is not None else ""
+    local = getattr(error, "code", "")
+    if name in ("APITimeoutError", "TimeoutError") or local == "local_model_timeout":
         code, status, message = "provider_timeout", 504, "O serviço de IA demorou para responder."
-    elif isinstance(cause, anthropic.RateLimitError):
+    elif name == "RateLimitError" or local == "local_model_busy":
         code, status, message = "provider_busy", 503, "O serviço de IA está ocupado no momento."
     else:
         code, status, message = (
@@ -155,27 +162,18 @@ class SimulatedGenerator:
 
     def create(self, *, system, messages, tools, context) -> ModelReply:
         last = messages[-1]
-        if isinstance(last["content"], str):
-            return ModelReply(
-                [
-                    {
-                        "type": "tool_use",
-                        "id": f"sim_{secrets.token_hex(6)}",
-                        "name": "list_categories",
-                        "input": {},
-                    }
-                ],  # fmt: skip
-                "tool_use",
-            )
-        outcome = json.loads(last["content"][0]["content"])
+        if last["role"] != "tool_results":
+            call = ToolCall(f"sim_{secrets.token_hex(6)}", "list_categories", {})
+            return ModelReply("", [call], TOOL_USE)
+        outcome = json.loads(last["results"][0].content)
         count = len(outcome["data"]["categories"]) if outcome["ok"] else 0
-        question = next(m["content"] for m in reversed(messages) if isinstance(m["content"], str))
+        question = next(m["content"] for m in reversed(messages) if m["role"] == "user")
         text = (
             "[Resposta simulada — nenhum modelo de IA foi chamado.] "
             f"Recebi: “{question[:200]}”. A ferramenta list_categories respondeu com {count} "
             "categorias nesta versão dos dados.\n[fontes: 2]"
         )
-        return ModelReply([{"type": "text", "text": text}], "end_turn")
+        return ModelReply(text, [], END_TURN)
 
 
 class AssistantService:
@@ -289,10 +287,15 @@ class AssistantService:
             except UncertainUsage as error:
                 log.warning("provider call uncertain: %s", error)
                 raise _provider_error(error) from None
+            except ProviderError as error:
+                log.warning("local model failed: %s", error)
+                raise _provider_error(error) from None
             except BudgetError as error:
                 log.warning("budget refused the call: %s", error)
                 raise _unavailable() from None
         if diagnostics is not None:
+            if result.call_metrics:
+                diagnostics["call_metrics"] = list(result.call_metrics)
             diagnostics.update(
                 status=result.status,
                 model_calls=result.model_calls,
@@ -325,6 +328,8 @@ class Settings:
     pricing_path: Path
     allowed_origins: tuple[str, ...]
     cookie_secure: bool
+    provider: str | None = None  # backend configuration only; None = the default for the mode
+    ollama_url: str | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -339,21 +344,50 @@ class Settings:
             pricing_path=Path(os.environ.get("EMPORIO_PRICING_PATH") or PRICING_PATH),
             allowed_origins=tuple(o.strip() for o in origins.split(",") if o.strip()),
             cookie_secure=os.environ.get("EMPORIO_COOKIE_SECURE", "").lower() == "true",
+            provider=os.environ.get("EMPORIO_PROVIDER") or None,
+            ollama_url=os.environ.get("EMPORIO_OLLAMA_URL") or None,
         )
 
 
-def build_service(settings: Settings, **kwargs) -> AssistantService | None:
-    """None when no mode is selected. Live mode needs every prerequisite; nothing falls back."""
+def default_provider(mode: str | None) -> str:
+    return {"local": "ollama", "simulated": "simulated"}.get(mode or "", "anthropic")
+
+
+def build_service(settings: Settings, generator=None, **kwargs) -> AssistantService | None:
+    """None when no mode is selected. Each mode needs every prerequisite; nothing falls back to
+    another provider or mode. `generator` lets the runner pass a configured one."""
     if settings.mode is None:
         return None
     if settings.mode not in MODES:
         raise AdapterConfigError(f"EMPORIO_ASSISTANT_MODE must be one of {MODES}")
-    if settings.mode == "simulated":
-        return AssistantService(SimulatedGenerator(), settings.data_dir, **kwargs)
+    provider = settings.provider or default_provider(settings.mode)
+    if provider not in PROVIDERS[settings.mode]:
+        raise AdapterConfigError(f"provider '{provider}' is not valid for mode '{settings.mode}'")
+    if generator is None:
+        generator = make_generator(settings)
+    if generator.mode != settings.mode:
+        raise AdapterConfigError("the generator does not match the configured mode")
+    return AssistantService(generator, settings.data_dir, **kwargs)
+
+
+def make_generator(settings: Settings, **overrides):
+    """The configured provider's generator; `overrides` are its settings fields."""
+    provider = settings.provider or default_provider(settings.mode)
+    if provider == "simulated":
+        return SimulatedGenerator()
+    if provider == "ollama":
+        from .ollama_adapter import OllamaGenerator, OllamaSettings
+
+        url = {"base_url": settings.ollama_url} if settings.ollama_url else {}
+        return OllamaGenerator(OllamaSettings(**url, **overrides))
     try:
-        generator = AnthropicGenerator(
-            Ledger(settings.ledger_path), load_price_table(settings.pricing_path)
-        )
+        ledger, prices = Ledger(settings.ledger_path), load_price_table(settings.pricing_path)
     except (BudgetError, PricingError) as error:
         raise AdapterConfigError(f"live mode not ready: {error}") from None
-    return AssistantService(generator, settings.data_dir, **kwargs)
+    if provider == "openai":
+        from .openai_adapter import OpenAIGenerator, OpenAISettings
+
+        return OpenAIGenerator(ledger, prices, OpenAISettings(**overrides))
+    from .anthropic_adapter import GenerationSettings
+
+    return AnthropicGenerator(ledger, prices, GenerationSettings(**overrides))

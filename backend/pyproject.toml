@@ -9,6 +9,7 @@ description = "Backend for the Empório da Música AI support assistant."
 requires-python = ">=3.11,<3.12"
 dependencies = [
     "anthropic==2.3.0",  # official Claude SDK (Messages API); used only by the live adapter
+    "openai==3.42.1",  # official OpenAI SDK (Responses API); used only by the Luna adapter
     "fastapi==0.162.0",
     "pypdf==6.21.4",  # local text extraction of the store manual (pure Python, BSD-3)
     "uvicorn==0.54.0",
@@ -39,6 +40,8 @@ select = ["E", "F", "I", "B", "UP"]
 extend-immutable-calls = [
     "emporio_assistant.agent.AgentConfig",
     "emporio_assistant.anthropic_adapter.GenerationSettings",
+    "emporio_assistant.openai_adapter.OpenAISettings",
+    "emporio_assistant.ollama_adapter.OllamaSettings",
 ]
 
 [tool.pytest.ini_options]

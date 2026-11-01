@@ -20,8 +20,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from .anthropic_adapter import AdapterConfigError
 from .assistant import AssistantService, PublicError, Settings, build_service, not_configured
+from .generation import AdapterConfigError
 
 log = logging.getLogger(__name__)
 COOKIE = "emporio_session"

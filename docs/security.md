@@ -10,7 +10,7 @@ The guard protects its own config, agents, rules and canonical instruction files
 The guard blocks `git add` as well as commit/push/history mutations to preserve manual staging. It may conservatively block commands mentioning Git mutation verbs; use a read-only file tool or ask Matheus, not a bypass.
 
 ## Credentials
-Owner creates dedicated API projects/keys. `.env.example` contains names/placeholders only. No key pasted into chat/Linear/README, no environment dump, no VITE_ provider keys. Backend loads secrets at runtime without logging. Gitignore does not prevent model reading; read denies do not stop every indirect subprocess. Keep permissions narrow and inspect the diff before staging.
+Owner creates dedicated API projects/keys. `.env.example` contains names/placeholders only. No key pasted into chat/Linear/README, no environment dump, no VITE_ provider keys. Backend loads secrets at runtime without logging (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, each read only by its adapter; a missing key refuses before any client or call). The Ollama adapter accepts only a loopback http URL. Gitignore does not prevent model reading; read denies do not stop every indirect subprocess. Keep permissions narrow and inspect the diff before staging.
 Do not request access to unrelated directories/accounts. Linear actions must explicitly target EMP team UUID and the project UUID. If connector permissions are workspace-wide, a written EMP rule does not technically scope the credential: confirm destination on every write.
 
 ## Source files

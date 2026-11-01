@@ -300,3 +300,61 @@ def test_old_reports_mark_missing_evidence_instead_of_inventing_it():
     assert evidence["text"] == "Oi" and evidence["tools_used"] == ["search_products"]
     assert evidence["sources"] == evidence["trace"] == evidence["dropped_sections"] == NOT_RECORDED
     assert turn_evidence({"text": "Oi"})["status"] == NOT_RECORDED
+
+
+def test_paid_runs_are_labelled_paid_and_simulated_ones_simulated(
+    generation_dir, live_ledger, pricing, tmp_path
+):
+    from conftest import text
+
+    paid = traced_run(generation_dir, live_ledger, pricing, tmp_path, text("Olá."), trace=False)
+    assert paid["execution"] == "paid_api" and paid["simulated"] is False and "ledger" in paid
+    assert "cost" not in paid and "runtime" not in paid
+    simulated = load(run(simulated_executor(), ids=["DEV-026"], out_dir=tmp_path))
+    assert simulated["execution"] == "simulated" and simulated["simulated"] is True
+
+
+def test_cli_refuses_other_providers_before_any_call(tmp_path, capsys, monkeypatch):
+    from emporio_assistant import openai_adapter
+
+    monkeypatch.delenv(openai_adapter.API_KEY_ENV, raising=False)
+    monkeypatch.setenv("EMPORIO_LEDGER_PATH", str(tmp_path / "absent.sqlite"))
+    base = ["--ids", "DEV-026", "--out-dir", str(tmp_path)]
+    paid = ["--executor", "live", "--provider", "openai", "--confirm-paid-run"]
+    assert main([*base, *paid, "--batch-cap-usd", "0.05"]) == 1
+    assert "live mode not ready" in capsys.readouterr().out
+    assert main([*base, *paid]) == 1  # no cap
+    monkeypatch.setenv("EMPORIO_OLLAMA_URL", "http://10.0.0.5:11434")
+    assert main([*base, "--executor", "local"]) == 1
+    assert "loopback" in capsys.readouterr().out
+    assert main([*base, "--executor", "simulated", "--num-ctx", "8192"]) == 1
+    assert list(tmp_path.glob("*.json")) == []  # nothing ran
+
+
+def test_provider_must_match_the_mode_and_comes_only_from_backend_settings(generation_dir):
+    import pytest
+
+    from emporio_assistant.assistant import Settings, build_service
+    from emporio_assistant.generation import AdapterConfigError
+
+    def settings(mode, provider):
+        return Settings(mode, generation_dir, generation_dir, generation_dir, (), False, provider)
+
+    for mode, provider in [("simulated", "openai"), ("local", "anthropic"), ("live", "ollama")]:
+        with pytest.raises(AdapterConfigError, match="not valid"):
+            build_service(settings(mode, provider))
+    assert build_service(settings("simulated", None)).mode == "simulated"
+
+
+def test_frozen_haiku_baseline_configuration_hash():
+    """The second Haiku smoke run (20261101T220143Z-c17786) used config 0b5879238a78; EMP-11
+    must not change the prompt, tools or Haiku settings behind that hash."""
+    from emporio_assistant.agent import AgentConfig, config_version
+    from emporio_assistant.anthropic_adapter import AnthropicGenerator, GenerationSettings
+
+    class Probe:
+        mode = "live"
+        describe = AnthropicGenerator.describe
+        settings = GenerationSettings()
+
+    assert config_version(Probe(), AgentConfig(max_model_calls=4)) == "0b5879238a78"

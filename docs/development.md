@@ -30,7 +30,8 @@ The verifier FAILS if the app is not scaffolded. Browser/live smoke checks are s
 - Interactive browser check (local, `.local/chat-check.mjs`, not versioned): `node .local/chat-check.mjs` from the repo root starts uvicorn (simulated), Vite and headless Edge, drives real keyboard/mouse input over the DevTools Protocol and prints PASS/FAIL per step. It needs ports 8000, 5173 and 9333 free.
 - Budget settle (owner): `... budget settle <op_id> --usage '{"input": 1200, "output": 300, "cache_write_5m": 0, "cache_write_1h": 0, "cache_read": 0}'` records usage confirmed in the provider console for an `uncertain` operation; incomplete usage is refused.
 - Ledger view of one run (read-only): `... budget run <run_id>` prints that run's operations, reported usage, reserved/confirmed µUSD and open holds.
-- Pilot (two authorized batches, NOT run yet): see `docs/evaluation.md` "First live pilot".
+- Runs: Haiku pilot and second smoke run in `docs/evaluation.md`. Runner executors: `placeholder`, `simulated`, `live --provider anthropic|openai` (paid: `--confirm-paid-run --batch-cap-usd`), `local` (Ollama, loopback only; `--num-ctx`, `--num-predict`). Reports state `execution` (`simulated` / `local_inference` / `paid_api`). Comparison commands: `docs/evaluation.md` "Model comparison runs".
+- Chat server provider: `EMPORIO_ASSISTANT_MODE` (`live` / `local` / `simulated`) plus optional `EMPORIO_PROVIDER` (`anthropic` default, `openai`) and `EMPORIO_OLLAMA_URL` (loopback http, default `http://127.0.0.1:11434`).
 
 ## Before marking ready for owner review
 - Selected acceptance criteria exercised; outputs checked, no invented PASS.
