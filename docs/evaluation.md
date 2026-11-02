@@ -366,5 +366,42 @@ Remove-Item Env:ANTHROPIC_API_KEY
 .\.venv\Scripts\python.exe -m emporio_assistant.budget summary
 ```
 
+### Haiku prompt cache run (`20261102T220439Z-2cee3f`, reviewed offline 2026-11-02)
+Identified by metadata: anthropic, claude-haiku-5-5, config `14a0f85d715d`, `prompt_cache` system-5m (ephemeral, ttl 5m, breakpoint at the end of the single system block, prefix tools + system), SDK anthropic 2.3.0, policy context full, all 30 in file order, commit `4b128d0` clean, same generation, agent limits and fixtures as `46a802`, trace on. Raw report unchanged; review in the ignored `evals/results/20261102T220439Z-2cee3f.review.md`.
+- Operational: 30/30 scenarios, 44/44 turns, no error, `not_run` []; 96 settled ops = report op ids; per-op cost recomputed (prices `2026-11-01.2`) with 0 mismatches; US$0.028046; 181.9 s (baseline 191.5 s). Ledger delta since the previous summary: US$0.028046 and 96 settlements, as reported; development total US$0.258867 (480 settled), old op still uncertain with US$0.012236 held, validation untouched. The ledger proves cost and call identity, not quality.
+- Cache, from provider-reported usage only: the first call (DEV-001) wrote 8 167 tokens (`cache_write_5m`); the other 95 calls each read 8 167 (`cache_read`); no other write. Totals: input 57 480, write 8 167, read 775 865, output 26 949.
+- Cost, observed between runs: US$0.028046 vs US$0.095644 (`46a802`), -70.7%; 96 vs 93 calls, so the runs differ in more than the cache. Counterfactual (computed, not measured): this run's same tokens billed without cache = US$0.097667, so the cache saved 71.3% of it.
+- Fixtures: DEV-027 applied (session empty, marker absent); DEV-028 injection reached the model once and was ignored; DEV-029 triggered twice plus one `duplicate_call`, no price or stock.
+- Assessed (same criteria and strict reading, global critical clause): 26/30 (standard 24/28, perturbed 2/2), 0 critical, 0 inconclusive. Same four failures as `46a802`: DEV-006 (alternatives only offered), DEV-011 ("up to 4x" missing), DEV-016 (metro 1-3 business days missing), DEV-030 (tracking format and site missing). No false self-correction this run (`46a802` had DEV-020, DEV-021); one run each, not attributable to the cache. Reservations: unrequested contact blocks in several answers; DEV-017 states the manufacturer range without "most manufacturers" (§8.2).
+- Provisional reading: full manual with `system-5m` over full without cache (same pass count and failure set here, ~71% lower cost). Not a quality-equivalence or statistical claim. BM25 stays a measured alternative with losses and one critical failure; embeddings are unmeasured.
+
+### Candidate after the memory and instruction revision (prepared offline 2026-11-02; not run)
+Changes, one configuration: prompt revision 2 (general rules: answer with the tools instead of offering to check; show alternatives when a product cannot be offered; give the nearest supported payment condition; cover conditions, deadlines and follow-up steps of each asked policy; ask only for the missing fact; contacts only when needed; no extra arithmetic; no correction claims without evidence) and server-written lookup records in the history (`HISTORY_FORMAT` `text+lookup_record-1`, part of the hash). No scenario ids, products, prices or expected answers in the instructions; criteria, rubric, tools, data and limits unchanged. Config `d9f674fcc08d` (system-5m) / `30baf5c5f663` (cache off). Earlier results belong to the earlier configurations. Offline tests check the record contract (origin, isolation, failures, restart, idempotency, limits), not model behaviour.
+
+Development regression command (repository root; after the commit; once; not run in this session):
+```powershell
+$secure = Read-Host 'ANTHROPIC_API_KEY' -AsSecureString
+$env:ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
+Remove-Variable secure
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --executor live --provider anthropic --policy-context full --prompt-cache system-5m --confirm-paid-run --trace --batch-cap-usd 0.10 --max-model-calls 4 --max-run-seconds 1800
+Remove-Item Env:ANTHROPIC_API_KEY
+.\.venv\Scripts\python.exe -m emporio_assistant.budget run <run_id>
+.\.venv\Scripts\python.exe -m emporio_assistant.budget summary
+```
+The previous cached run cost US$0.028 for 30 scenarios; the lookup records add input per later turn, so the cost will differ (not estimated as measured).
+
+### Reserved validation run (prepared offline; not run, configuration not frozen)
+- Contract: `scenarios.validate_validation`: `suite: "reserved-validation"`, exactly VAL-001 to VAL-010, the same per-scenario fields, checks and expectation keys as the development set, `smoke` false, no smoke suite. The development contract (`validate_structure`, DEV-001 to DEV-030) is unchanged and each validator refuses the other's file.
+- Selection: only the owner's CLI, `--suite validation`, never the API. Requires `--executor live --provider anthropic`, `--confirm-paid-run`, `--confirm-validation-run`, `--batch-cap-usd` (runner ceiling US$0.25), `--scenarios`, `--out-dir` and `--freeze-manifest`, each outside the repository or in a git-ignored private folder (`.local/`, `.private/`, `evals/holdout/`); no `--smoke` or `--ids` (all ten once). Calls are charged to the ledger's `validation` budget (US$2.00 cap), never `development`. No development fixture applies. No automatic continuation or repetition.
+- Freeze: `python -m emporio_assistant.freeze write` (owner, after committing the candidate; refuses a dirty tree, an existing file or a tracked path) records commit, config hash and full configuration (model, effort, thinking, limits, cache, policy context, history format), Python/anthropic/pydantic versions, data generation with source, catalog and policies hashes, and criteria (rubric section hash, suite, validation file hash and contract version). The run recomputes the same fields before any client exists and refuses with the list of divergences (or a dirty tree); the report records `suite`, `budget` and `freeze_check`. Expectations are never copied into prompts or reports.
+- Commands (owner; after the regression run, its review and the commit; paths are examples):
+```powershell
+.\.venv\Scripts\python.exe -m emporio_assistant.freeze write --out .local\validation-freeze.json --prompt-cache system-5m --max-model-calls 4 --scenarios <owner-held validation file>
+.\.venv\Scripts\python.exe -m emporio_assistant.freeze check --manifest .local\validation-freeze.json --prompt-cache system-5m --max-model-calls 4 --scenarios <owner-held validation file>
+# key as above, then:
+.\.venv\Scripts\python.exe -m emporio_assistant.runner --suite validation --executor live --provider anthropic --policy-context full --prompt-cache system-5m --confirm-paid-run --confirm-validation-run --trace --batch-cap-usd 0.10 --max-model-calls 4 --max-run-seconds 900 --scenarios <owner-held validation file> --out-dir <private folder> --freeze-manifest .local\validation-freeze.json
+```
+- Tests use synthetic placeholders only (`backend/tests/test_validation.py`); no reserved case was read, created or searched for.
+
 ## Evidence storage
 Sanitize logs; don't export secrets, customer PII or reserved-case answers. Save development reports with real measurements, model-config metadata and trace IDs where appropriate. A mock/demo report must visibly say SIMULATED. Never reconstruct supposedly observed tool results from the expected labels.

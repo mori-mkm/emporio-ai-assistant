@@ -22,6 +22,11 @@ from .generations import GenerationError, active_generation
 
 SCENARIO_COUNT = 30
 ID_PATTERN = re.compile(r"DEV-\d{3}")
+# Reserved validation (owner-held, outside the development tree): same per-scenario contract,
+# its own ids and size. Nothing here reads or creates those cases.
+VALIDATION_SUITE = "reserved-validation"
+VALIDATION_COUNT = 10
+VALIDATION_ID = re.compile(r"VAL-\d{3}")
 CATEGORIES = {"catalog", "pricing", "policy", "continuity", "scope", "security"}
 LANGUAGES = {"pt-BR", "en"}
 EVALUATION = {"deterministic", "human", "both"}
@@ -97,14 +102,14 @@ def _check_arithmetic(where: str, check: dict, errors: list[str]) -> None:
             errors.append(f"{where}: {n} x {per} != {total} (use an exactly divisible case)")
 
 
-def _validate_scenario(s: dict, errors: list[str]) -> None:
+def _validate_scenario(s: dict, errors: list[str], id_pattern: re.Pattern = ID_PATTERN) -> None:
     sid = s.get("id", "?")
     bad = [n for n, kind in SCENARIO_FIELDS.items() if not isinstance(s.get(n), kind)]
     if bad:
         errors.append(f"{sid}: fields missing or of the wrong type: {bad}")
         return
-    if not ID_PATTERN.fullmatch(sid):
-        errors.append(f"{sid}: id must look like DEV-001")
+    if not id_pattern.fullmatch(sid):
+        errors.append(f"{sid}: id must match {id_pattern.pattern}")
     for name in ("title", "goal"):
         if not s[name].strip():
             errors.append(f"{sid}: '{name}' is empty")
@@ -196,10 +201,7 @@ def _validate_scenario(s: dict, errors: list[str]) -> None:
             errors.append(f"{where}: section {check['section']} not in references.manual")
 
 
-def validate_structure(data: object) -> list[str]:
-    """Return contract errors; an empty list means the set is structurally valid."""
-    if not isinstance(data, dict):
-        return ["top level must be an object"]
+def _common_errors(data: dict) -> list[str]:
     errors: list[str] = []
     _find_forbidden_keys(data, "$", errors)
     if type(data.get("contract_version")) is not int:
@@ -215,6 +217,40 @@ def validate_structure(data: object) -> list[str]:
         errors.append("data_version.sources_sha256 needs categories, products, promotions, manual")
     elif not all(isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h) for h in hashes.values()):
         errors.append("data_version.sources_sha256 values must be SHA-256 hex digests")
+    return errors
+
+
+def validate_validation(data: object) -> list[str]:
+    """Reserved validation contract: VAL-001..VAL-010, the same per-scenario fields, checks and
+    expectation keys as the development set, no smoke suite. Structure only."""
+    if not isinstance(data, dict):
+        return ["top level must be an object"]
+    errors = _common_errors(data)
+    if data.get("suite") != VALIDATION_SUITE:
+        errors.append(f"suite must be '{VALIDATION_SUITE}'")
+    if "smoke_suite" in data:
+        errors.append("validation files have no smoke_suite")
+    scenarios = data.get("scenarios")
+    if not isinstance(scenarios, list) or not all(isinstance(s, dict) for s in scenarios):
+        return errors + ["scenarios must be a list of objects"]
+    ids = [s.get("id") for s in scenarios]
+    expected = {f"VAL-{n:03d}" for n in range(1, VALIDATION_COUNT + 1)}
+    if len(ids) != VALIDATION_COUNT or set(ids) != expected:
+        errors.append(f"scenario ids must be exactly VAL-001 to VAL-{VALIDATION_COUNT:03d}")
+    for s in scenarios:
+        _validate_scenario(s, errors, VALIDATION_ID)
+        if s.get("smoke") is not False:
+            errors.append(f"{s.get('id', '?')}: smoke must be false in validation")
+    return errors
+
+
+def validate_structure(data: object) -> list[str]:
+    """Return contract errors; an empty list means the set is structurally valid."""
+    if not isinstance(data, dict):
+        return ["top level must be an object"]
+    errors = _common_errors(data)
+    if "suite" in data:
+        errors.append("the development set has no 'suite' field (validation files do)")
     if not isinstance(data.get("smoke_rationale"), str) or not data["smoke_rationale"].strip():
         errors.append("smoke_rationale is required")
 

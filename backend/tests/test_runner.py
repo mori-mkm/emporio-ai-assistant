@@ -346,9 +346,10 @@ def test_provider_must_match_the_mode_and_comes_only_from_backend_settings(gener
     assert build_service(settings("simulated", None)).mode == "simulated"
 
 
-def test_frozen_haiku_baseline_configuration_hash():
-    """The second Haiku smoke run (20261101T220143Z-c17786) used config 0b5879238a78; EMP-11
-    must not change the prompt, tools or Haiku settings behind that hash."""
+def test_frozen_haiku_candidate_configuration_hash():
+    """Prompt revision 2 with server lookup records (2026-11-02). Earlier runs belong to the
+    earlier prompt: 0b5879238a78 (no cache) and 14a0f85d715d (system-5m). Any change to the
+    prompt, memory format, tools or Haiku settings must show up as a new hash here."""
     from emporio_assistant.agent import AgentConfig, config_version
     from emporio_assistant.anthropic_adapter import AnthropicGenerator, GenerationSettings
 
@@ -357,4 +358,4 @@ def test_frozen_haiku_baseline_configuration_hash():
         describe = AnthropicGenerator.describe
         settings = GenerationSettings()
 
-    assert config_version(Probe(), AgentConfig(max_model_calls=4)) == "0b5879238a78"
+    assert config_version(Probe(), AgentConfig(max_model_calls=4)) == "30baf5c5f663"

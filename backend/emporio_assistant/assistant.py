@@ -323,7 +323,13 @@ class AssistantService:
         if result.status == "answered":
             session.history += [
                 {"role": "user", "content": text},
-                {"role": "assistant", "content": result.text},
+                {  # lookups come from the agent's tool loop, never from model or client text
+                    "role": "assistant",
+                    "content": result.text,
+                    "lookups": list(result.lookups),
+                    "turn": session.turns + 1,
+                    "data_generation": snapshot.id,
+                },
             ]
         session.turns += 1
         return {

@@ -1,6 +1,24 @@
 # Session handoff
 
-## Current state (2026-11-02, DEV-022 severity corrected, prompt cache prepared)
+## Current state (2026-11-02, cache run reviewed; memory, instructions, validation path prepared)
+- Git: `main` at `4b128d0`; this session's code, tests and docs are uncommitted (owner commits).
+- Cache run `2cee3f` (config `14a0f85d715d`): 26/30, 0 critical, same four failures as the uncached `46a802`; US$0.028046 vs US$0.095644; 1 cache write + 95 reads reported by the provider. Provisional: full manual + `system-5m`.
+- Candidate (not run): prompt revision 2 + server lookup records, config `d9f674fcc08d` (cache) / `30baf5c5f663` (off). Offline tests only; earlier results do not describe it.
+- Reserved validation: `--suite validation` + `emporio_assistant.freeze` prepared and tested with synthetic placeholders; not run, nothing frozen.
+- Ledger: development US$0.258867 confirmed (480 settled), old op `20261101T235500Z-126a30:68e51f38c894` uncertain with US$0.012236 held, validation US$0 used.
+- Open: EMP-12/13/14/15/16 not Done. BM25 measured (21/30, 1 critical); embeddings unmeasured; Qwen suspended. Linear: no connector.
+
+## 2026-11-02 — cache review, lookup memory, instruction revision, validation path, docs (offline)
+- Cache run `20261102T220439Z-2cee3f` identified by metadata and ledger (96 ops = report ids, 0 cost mismatches, delta US$0.028046 / 96 settlements as reported). Assessed 26/30, 0 critical; review in the ignored `evals/results/20261102T220439Z-2cee3f.review.md`; summary in `docs/evaluation.md`. Counterfactual without cache for the same tokens: US$0.097667 (computed).
+- Memory: `agent.py` records each tool event of a turn (validated arguments, ok / failed / not_run) in `TurnResult.lookups`; `assistant.py` stores it with the answered turn, turn number and data generation; `render_history` puts a server `<lookup_record>` at the start of each earlier assistant message; record tags in customer/model text are neutralized and forged records stripped from replies. Works with trace off; same path for API and runner. Tests: `backend/tests/test_memory.py`.
+- Instructions: one general revision (tools before offering, alternatives, nearest supported payment condition, complete policy points, missing fact only, contacts only when needed, no extra arithmetic, no unsupported correction claims). Frozen-hash tests now pin the candidate (`30baf5c5f663`, `d9f674fcc08d`).
+- Chat flow: `.local/chat-check.mjs` (headless Edge, simulated backend, no model) ALL PASS: load/banner/focus, Enter/Shift+Enter, sources, continuity and double send, failure with text kept, keyboard retry, late reply dropped after "Nova conversa", Tab order, 360 px without horizontal scroll. No defect found; UI unchanged.
+- Validation: `scenarios.validate_validation` (VAL-001..010), runner `--suite validation` (validation budget, private paths, no ids/smoke, freeze check before any client), `freeze.py` (write/check manifest). Tests: `backend/tests/test_validation.py` (synthetic placeholders only).
+- Deliverables: `export.py` (3-5 observed conversations, refuses validation/simulated/local) with `backend/tests/test_export.py`; draft from `2cee3f` kept local (`.local/examples-draft-2cee3f.md`, earlier configuration); README rewritten; EMP-14 record in `docs/architecture.md`; report draft `docs/report.md`.
+- No paid call, no local inference, no ledger change, no reserved case accessed.
+
+## Earlier current state (before this session, kept as history)
+### Current state (2026-11-02, DEV-022 severity corrected, prompt cache prepared)
 - Git: `main` at `efe1471`; this session's code, tests and docs are uncommitted.
 - Haiku + BM25 (`6cd4eb`): 21/30 vs 26/30 full manual, US$0.054699 vs US$0.095644; losses DEV-013, 017, 022, 023, 029; DEV-022 is a critical failure under the existing rubric (correction C1: it denies the §4.4 exclusions). Critical: full 0, BM25 1. Full manual stays the baseline; embeddings unmeasured.
 - Prompt cache: opt-in `--prompt-cache system-5m` (Anthropic, full manual), config `14a0f85d715d`; off by default with baseline payload and hash `0b5879238a78`. Paid run not executed.
@@ -218,7 +236,7 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus commits the benchmark preparation and BM25 step, runs the two 30-scenario batches and shares the run ids. Embeddings not started.
+Matheus reviews and commits this session's changes, runs the candidate's 30-scenario development regression once (command in `docs/evaluation.md`, cap US$0.10) and shares the run id. Then: review it, decide the configuration to freeze, write the freeze manifest after the commit, run the reserved validation, and finish the examples and the report PDF from the validated configuration.
 
 ## Update template
 - Date / EMP issue:

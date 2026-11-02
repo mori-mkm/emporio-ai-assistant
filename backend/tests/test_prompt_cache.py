@@ -78,8 +78,8 @@ def test_enabled_has_its_own_description_and_hash():
     off, on = Probe(), Probe()
     off.settings, on.settings = GenerationSettings(), CACHED
     config = AgentConfig(max_model_calls=4)
-    assert config_version(off, config) == "0b5879238a78"
-    assert config_version(on, config) != "0b5879238a78"
+    assert config_version(off, config) == "30baf5c5f663"  # candidate prompt, cache off
+    assert config_version(on, config) == "d9f674fcc08d"  # candidate prompt, system-5m
     assert on.describe()["prompt_cache"]["cache_control"] == {"type": "ephemeral", "ttl": "5m"}
 
 

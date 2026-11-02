@@ -174,9 +174,13 @@ def test_conversation_continues_across_turns_with_text_history(
     service.send(session.id, "Que categorias vocês têm?", "r1")
     service.send(session.id, "E esse tem estoque?", "r2")
     third = client.requests[2]["input"]
-    assert third == [
+    record = (
+        f'<lookup_record source="server" turn="1" data_generation="{session.generation_id}">\n'
+        "- list_categories {} -> ok\n</lookup_record>\n"
+    )
+    assert third == [  # text history plus the server's lookup record, no reasoning items
         {"role": "user", "content": "Que categorias vocês têm?"},
-        {"role": "assistant", "content": "Temos violões."},
+        {"role": "assistant", "content": record + "Temos violões."},
         {"role": "user", "content": "E esse tem estoque?"},
     ]
 

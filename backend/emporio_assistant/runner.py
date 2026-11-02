@@ -7,6 +7,7 @@ and, with the built-in executor, calls no model: every run file says SIMULATED.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import secrets
 import subprocess
@@ -21,7 +22,7 @@ from pathlib import Path
 
 from .budget import BudgetError
 from .fixtures import DEV_028_TEXT, AuxiliarySession, CatalogTimeout, ProductTextInjection
-from .scenarios import validate_structure
+from .scenarios import validate_structure, validate_validation
 
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_SCENARIOS = REPO / "evals" / "development_scenarios.json"
@@ -174,7 +175,7 @@ def service_executor(
         execution=EXECUTION[service.mode],
         runtime_report=getattr(generator, "runtime", None),
         end_scenario=end_scenario,
-        fixtures=True,
+        fixtures=bool(fixtures),
     )
 
 
@@ -216,11 +217,12 @@ def run(
     out_dir: Path = DEFAULT_OUT,
     run_id: str | None = None,
     max_run_s: float | None = None,
+    suite: str = "development",
 ) -> Path:
     data = json.loads(scenarios_path.read_text(encoding="utf-8"))
-    errors = validate_structure(data)
+    errors = (validate_validation if suite == "validation" else validate_structure)(data)
     if errors:
-        raise ValueError(f"scenario file is invalid ({len(errors)} errors)")
+        raise ValueError(f"scenario file is invalid for the {suite} suite ({len(errors)} errors)")
     chosen = select(data, ids, smoke)
     started_at = datetime.now(UTC)
     run_id = run_id or new_run_id(executor.simulated)
@@ -284,6 +286,7 @@ def run(
     report = {
         "report_format": REPORT_FORMAT,
         "run_id": run_id,
+        "suite": suite,
         "simulated": executor.simulated,
         "execution": executor.execution,
         "trace_enabled": executor.trace,
@@ -371,8 +374,18 @@ def main(argv: list[str] | None = None) -> int:
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--smoke", action="store_true", help="run the smoke suite")
     group.add_argument("--ids", help="comma-separated ids, e.g. DEV-001,DEV-004")
-    parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS)
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--scenarios", type=Path, default=None, help="default: development set")
+    parser.add_argument("--out-dir", type=Path, default=None, help="default: evals/results")
+    parser.add_argument(
+        "--suite",
+        choices=["development", "validation"],
+        default="development",
+        help="validation: the owner's 10 reserved cases, validation budget, frozen config "
+        "(needs --confirm-validation-run, --freeze-manifest, --scenarios and --out-dir "
+        "outside the repository or in a git-ignored private folder)",
+    )
+    parser.add_argument("--freeze-manifest", type=Path, default=None)
+    parser.add_argument("--confirm-validation-run", action="store_true")
     parser.add_argument(
         "--executor",
         choices=["placeholder", "simulated", "live", "local"],
@@ -419,6 +432,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     ids = args.ids.split(",") if args.ids else None
     try:
+        if args.suite == "validation":
+            _check_validation_args(args)
+        args.scenarios = args.scenarios or DEFAULT_SCENARIOS
+        args.out_dir = args.out_dir or DEFAULT_OUT
         if args.executor == "placeholder":
             executor, run_id = simulated_executor(), None
         else:
@@ -431,6 +448,7 @@ def main(argv: list[str] | None = None) -> int:
             out_dir=args.out_dir,
             run_id=run_id,
             max_run_s=args.max_run_seconds,
+            suite=args.suite,
         )
     except (OSError, ValueError) as error:
         print(f"FAILED: {error}")
@@ -442,6 +460,27 @@ def main(argv: list[str] | None = None) -> int:
     }[executor.execution]
     print(f"{label} written to {path} (nothing graded)")
     return 0
+
+
+def _check_validation_args(args) -> None:
+    """Refused before any client, ledger write or call. The cases themselves stay owner-held."""
+    from .freeze import private_path
+
+    if not args.confirm_validation_run:
+        raise ValueError("a validation run uses the reserved cases: add --confirm-validation-run")
+    if args.executor != "live" or args.provider != "anthropic":
+        raise ValueError("validation runs only the frozen candidate: --executor live, anthropic")
+    if args.smoke or args.ids:
+        raise ValueError("validation runs all reserved cases once: no --smoke or --ids")
+    for name in ("scenarios", "out_dir", "freeze_manifest"):
+        path = getattr(args, name)
+        if path is None:
+            raise ValueError(f"--{name.replace('_', '-')} is required for validation")
+        if not private_path(path):
+            raise ValueError(
+                f"--{name.replace('_', '-')} must be outside the repository or in a "
+                "git-ignored private folder"
+            )
 
 
 def _service_executor(args) -> tuple[Executor, str]:
@@ -477,6 +516,8 @@ def _service_executor(args) -> tuple[Executor, str]:
         k: v for k, v in (("num_ctx", args.num_ctx), ("num_predict", args.num_predict)) if v
     }
     config = AgentConfig(max_model_calls=args.max_model_calls)
+    validation = args.suite == "validation"
+    freeze_check = _freeze_check(args) if validation else None  # before any client exists
     try:
         generator = make_generator(settings, **overrides)
         if local:
@@ -487,11 +528,47 @@ def _service_executor(args) -> tuple[Executor, str]:
             config=config,
             run_cap_micro_usd=cap_micro,
             policy=POLICIES[args.policy_context](),
+            budget="validation" if validation else "development",
         )
     except (AdapterConfigError, ProviderError) as error:
         raise ValueError(str(error)) from None
     run_id = new_run_id(mode == "simulated")
-    return service_executor(service, run_id, trace=args.trace), run_id
+    if not validation:
+        return service_executor(service, run_id, trace=args.trace), run_id
+    if service.agent.version != freeze_check["config_version"]:
+        raise ValueError("the built service does not match the frozen configuration")
+    executor = service_executor(service, run_id + "-validation", trace=args.trace, fixtures={})
+    executor.configuration.update(budget=service.budget, freeze_check=freeze_check)
+    return executor, run_id + "-validation"
+
+
+def _freeze_check(args) -> dict:
+    import sqlite3
+
+    from .freeze import current_state, divergences
+    from .generations import GenerationError
+
+    manifest = json.loads(args.freeze_manifest.read_text(encoding="utf-8"))
+    try:
+        current = current_state(
+            prompt_cache=args.prompt_cache,
+            policy_context=args.policy_context,
+            max_model_calls=args.max_model_calls,
+            scenarios=args.scenarios,
+        )
+    except (ImportError, sqlite3.Error, GenerationError) as error:
+        raise ValueError(f"cannot compute the frozen configuration: {error}") from None
+    diffs = divergences(manifest, current)
+    if current["git"].get("dirty") is not False:
+        diffs.append("git.dirty: the working tree differs from the frozen commit")
+    if diffs:
+        raise ValueError("frozen configuration differs: " + "; ".join(diffs[:10]))
+    return {
+        "manifest_sha256": hashlib.sha256(args.freeze_manifest.read_bytes()).hexdigest(),
+        "config_version": current["config_version"],
+        "commit": current["git"].get("commit"),
+        "divergences": [],
+    }
 
 
 if __name__ == "__main__":

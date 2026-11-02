@@ -2,33 +2,40 @@
 
 Customer-support assistant for **Empório da Música**, a fictional music store, built for the Artefact AI Engineer technical case.
 
-## Current state
+## Goal and scope
 
-**Work in progress.** The chat works end to end in an offline **simulated** mode. The real model path (Claude Haiku 5.5) is implemented and tested only with a fake client: **no real Haiku call has been made yet**, so answer quality with the real model is not validated.
+Answer repetitive customer questions (products, prices, stock, promotions, payment, returns, exchanges, warranty, shipping, hours, contacts) accurately and in the store's tone, without inventing facts. In scope: a chat UI, a single agent with read-only catalog tools and the store manual, ephemeral conversation memory, and an evaluation harness with a budget ledger. Out of scope for v1: private orders and customer data, purchases, reservations, handoff to a human, WhatsApp, login, deployment.
 
-What works today:
-- Chat UI (EMP-10, React + TypeScript + Vite): customer and assistant messages, Enter to send / Shift+Enter for a new line, processing state, "Nova conversa", understandable errors with retry that keeps the typed text, manual sources under each answer, mobile layout. Simulated replies are labelled on screen.
-- Chat API (EMP-9, FastAPI): `POST /api/sessions`, `POST /api/messages`, `DELETE /api/sessions/current`, plus `GET /api/health`. The backend owns the session (opaque HttpOnly cookie), history, instructions, model and limits; the browser sends only text and a request id.
-- Single agent (EMP-9): one bounded loop - trusted instructions + full store manual -> model -> allowlisted read-only tools -> final answer. Prices, stock, promotions and payment come from tools; the agent never computes money. See [docs/architecture.md](docs/architecture.md).
-- Anthropic adapter (EMP-9): official SDK, Messages API, `claude-haiku-5-5`, every call through the budget gate with verified prices. Not exercised against the real API yet.
-- Data preparation (EMP-5): validated catalog CSVs -> local SQLite + the store manual extracted by page and section. Customers and orders are not loaded. See [docs/data.md](docs/data.md).
-- Evaluation scenarios (EMP-6): 30 development scenarios with pass criteria and a validator. No real model has been run against them. See [docs/evaluation.md](docs/evaluation.md).
-- Budget control (EMP-7): persistent SQLite ledger; one guarded path reserves the worst-case cost before each paid call, keeps the reservation when the outcome is uncertain and settles only complete provider usage.
-- Read-only catalog tools (EMP-8): `search_products`, `get_product`, `quote_price`, `list_categories`. See [docs/tools.md](docs/tools.md).
+## Current state (2026-11-02)
 
-Not done: the first real Haiku pilot (prepared, not run), other model adapters, retrieval variants, streaming, deployment.
+- Working end to end: chat UI (React + TypeScript + Vite) -> FastAPI -> one agent -> read-only tools over a local SQLite snapshot of the challenge catalog, with the full store manual in the prompt.
+- Real model runs were made on the 30 **development** scenarios (one run per configuration, reviewed by hand; results below). The 10 reserved validation cases have **not** been run.
+- The current code is a new candidate (revised instructions + server-recorded lookup memory, config `d9f674fcc08d` with cache, `30baf5c5f663` without). It has been tested offline only; no paid run of this candidate exists yet, so earlier results do not describe it.
+
+## Architecture
+
+```
+Browser (frontend/src) --text + request id--> FastAPI (main.py) --> AssistantService (sessions)
+   --> Agent (one bounded model/tool loop) --> provider adapter (Anthropic / OpenAI / Ollama / simulated)
+                                          \--> tools.call_tool --> read-only SQLite catalog snapshot
+```
+
+- **One agent, no framework.** A bounded loop (max model calls, tool calls, time, output and prompt size per turn) is enough for this scope and keeps every limit in code. See [docs/architecture.md](docs/architecture.md).
+- **Tools own the facts.** `search_products`, `get_product`, `quote_price`, `list_categories`. Money is computed only in `commerce.py` (Decimal, ROUND_HALF_UP); the model repeats tool values. Details in [docs/tools.md](docs/tools.md).
+- **Full manual as policy context.** The whole manual (~8k tokens) with section ids and pages; the answer cites sections and the backend keeps only ids that exist. BM25 retrieval was measured and lost quality (below); embeddings are not measured.
+- **Prompt caching (Anthropic, opt-in).** One explicit 5-minute breakpoint at the end of the stable system prompt (instructions + manual).
+- **Ephemeral memory.** History lives in the API process, per session, with limits and a 30-minute idle expiry. Each earlier assistant reply carries a server-written record of the tool calls that really ran in that turn (tool, validated arguments, ok/failed, data generation; no prices or stock).
+- **Budget ledger.** Every paid call goes through one guarded path that reserves a worst-case cost, settles only complete provider usage and keeps the reservation when the outcome is unknown.
 
 ## Prerequisites
 
-- Windows with PowerShell
+- Windows with PowerShell 5.1
 - Python 3.11 (`py -3.11`)
-- Node.js 24 and npm (tested with Node 24.18.0, npm 11.16.0)
+- Node.js 24 and npm (developed with Node 24.18.0, npm 11.16.0)
 
-No Docker or global packages are needed. An Anthropic API key is needed only for live mode.
+No Docker or global packages. API keys are needed only for live mode.
 
-## Setup (once)
-
-From the repository root:
+## Setup (once, from the repository root)
 
 ```powershell
 py -3.11 -m venv .venv
@@ -38,11 +45,11 @@ npm ci
 Set-Location ..
 ```
 
-`backend/pyproject.toml` declares the direct dependencies; `backend/constraints.txt` pins the full tested set. `frontend/package-lock.json` pins the frontend.
+`backend/pyproject.toml` declares the direct dependencies and `backend/constraints.txt` pins the tested set; `frontend/package-lock.json` pins the frontend. A clean install from scratch has not been re-run after the latest changes.
 
-## Prepare the challenge data
+## Prepare the local data
 
-The challenge sources are not in this repository. Point the command at your local copy of the extracted challenge folder (quotes matter: the folder name has spaces and accents):
+The challenge files are not in this repository. Point the command at your local copy (quotes matter: the folder name has spaces and accents):
 
 ```powershell
 $src = 'C:\path\to\Desafio Técnico AI Engineer 2026'
@@ -52,34 +59,34 @@ $src = 'C:\path\to\Desafio Técnico AI Engineer 2026'
     --output-dir data\derived
 ```
 
-It publishes a new generation (`catalog.sqlite`, `policies.json`, `quality_report.json`) under `data\derived\generations\`, makes it active through `data\derived\current.json` (all git-ignored) and prints counts and warnings. Exit code 1 means validation or publication failed and the active generation was not changed. Code that needs the files resolves them with `emporio_assistant.generations.active_generation`. Schema, money representation, data snapshot and the ambiguities found in the sources are in [docs/data.md](docs/data.md). The chat reads the active generation; a turn never mixes two generations.
+It validates the CSVs and the manual, publishes a new generation (`catalog.sqlite`, `policies.json`, `quality_report.json`) under `data\derived\generations\` and makes it active (all git-ignored). Customers and orders are not loaded. Exit code 1 means nothing changed. Data rules and source ambiguities: [docs/data.md](docs/data.md).
 
-Tests use small synthetic fixtures (`backend/tests/fixtures/synthetic_catalog/`), not the store's data.
+## Modes
 
-## Choose a mode
-
-The backend reads **process environment variables** (no `.env` loader; `.env.example` lists them). Set them in the PowerShell window that starts the API:
+The backend reads **process environment variables** only (`.env.example` lists them; no `.env` loader).
 
 | `EMPORIO_ASSISTANT_MODE` | Behaviour |
 |---|---|
-| unset (default) | Chat disabled: `POST /api/sessions` answers 503 `assistant_not_configured`. No mock, no paid call. Health still works. |
-| `simulated` | Offline: same API, sessions, agent loop and real tools; only the model is replaced by a scripted reply that says it is simulated. Not evidence of model quality. |
-| `live` | Claude Haiku 5.5 (paid). Needs the API key in the backend process, an existing live budget ledger and verified prices; otherwise the chat stays disabled and the reason is logged locally. |
+| unset (default) | Chat disabled (503 `assistant_not_configured`); health works. Never a mock or a paid call by default. |
+| `simulated` | Offline: real API, sessions, agent loop and tools; the model is replaced by a scripted reply that says it is simulated. Not evidence of model quality. |
+| `live` | Paid API. `EMPORIO_PROVIDER=anthropic` (default, Claude Haiku 5.5) or `openai` (GPT-6 Luna). Needs the key, verified prices and an existing live ledger. `EMPORIO_PROMPT_CACHE=system-5m` enables the Anthropic cache. |
+| `local` | Ollama `qwen3:8b` on a loopback address, no ledger. Suspended for evaluation (failed a critical scenario). |
 
-Set the key for live mode without echoing it (Windows PowerShell 5.1; the value never reaches the browser, logs or run reports):
+Set a key without echoing it; it lasts only for that PowerShell window and never reaches the browser, logs or reports:
 
 ```powershell
-$secure = Read-Host 'Anthropic API key' -AsSecureString
+$secure = Read-Host 'ANTHROPIC_API_KEY' -AsSecureString
 $env:ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
 Remove-Variable secure
-$env:EMPORIO_ASSISTANT_MODE = 'live'
+# ... start the API ...
+Remove-Item Env:ANTHROPIC_API_KEY
 ```
 
-It lasts only for that PowerShell window; remove it with `Remove-Item Env:ANTHROPIC_API_KEY`. Live mode also needs the live ledger (`budget init --mode live`, owner action, see `docs/development.md`).
+The live ledger is created once by the owner: `.\.venv\Scripts\python.exe -m emporio_assistant.budget init --mode live` (refuses to overwrite). `budget summary` and `budget run <run_id>` are read-only.
 
 ## Run (two terminals)
 
-Terminal 1 - API (simulated mode shown):
+Terminal 1, API (simulated shown; run **one worker**, sessions are in memory):
 
 ```powershell
 Set-Location backend
@@ -87,52 +94,62 @@ $env:EMPORIO_ASSISTANT_MODE = 'simulated'
 ..\.venv\Scripts\python.exe -m uvicorn emporio_assistant.main:app --host 127.0.0.1 --port 8000
 ```
 
-Run **one worker**: sessions live in the API process memory and are lost on restart.
-
-Terminal 2 - web UI:
+Terminal 2, web UI:
 
 ```powershell
 Set-Location frontend
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 and type a question. In simulated mode a banner and a "Resposta simulada" badge mark every reply.
+Open http://127.0.0.1:5173. Vite forwards `/api/*` to the API, so the browser talks to one origin. In simulated mode a banner and a "Resposta simulada" badge mark every reply.
 
-| URL | What |
-|---|---|
-| http://127.0.0.1:5173 | Web UI (Vite dev server) |
-| http://127.0.0.1:8000/api/health | Health endpoint |
-| http://127.0.0.1:8000/docs | FastAPI interactive docs |
+## Offline checks
 
-In development, Vite forwards `/api/*` to `http://127.0.0.1:8000` (see `frontend/vite.config.ts`), so the browser only talks to one origin and the API does not enable CORS. Generation endpoints also require an allowed `Origin` (`EMPORIO_ALLOWED_ORIGINS`).
-
-## Checks
-
-All offline, no network or model calls:
+No network or model calls:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 .\.venv\Scripts\python.exe scripts\verify.py --mode app
 ```
 
-This runs the development-harness tests, `ruff check` and `pytest` (with the venv interpreter), then `npm run lint`, `npm run typecheck` and `npm run build`. Individually:
+Runs the harness tests, `ruff check`, `pytest` (fake provider clients) and the frontend lint, typecheck and build. Browser flow checks run locally with headless Edge against the simulated backend (scripts kept outside the repository, see `docs/progress.md`).
 
-```powershell
-Set-Location backend; ..\.venv\Scripts\python.exe -m ruff check .; ..\.venv\Scripts\python.exe -m pytest; Set-Location ..
-Set-Location frontend; npm run lint; npm run typecheck; npm run build; Set-Location ..
-```
+## Evaluation runs
 
-## Limits of this stage
+`python -m emporio_assistant.runner` runs the development scenarios through the same service as the API (`--help` lists the flags). Paid runs need `--executor live --confirm-paid-run --batch-cap-usd <= 0.25`; reports go to the git-ignored `evals/results/`. Method, commands and every reviewed run: [docs/evaluation.md](docs/evaluation.md). A separate `--suite validation` mode runs the owner's reserved cases on the validation budget after a freeze check; it has not been run.
 
-- The real Haiku path has only been tested offline with a fake client. Quality, latency and cost with the real model are unmeasured until the pilot runs.
-- The prompt asks the model to use tools, cite sources and not invent; that is model behaviour to evaluate, not a guarantee. Code-enforced controls are listed in `docs/architecture.md`.
-- Sessions are in memory (one worker, 30-minute expiry, 12 exchanges per conversation).
-- The budget ledger only controls application code that goes through it; it cannot see or stop other spending on provider accounts or Claude Code's own billing.
-- No customer or order data, no purchases, reservations or handoff to a human.
-- The catalog is a static snapshot of the challenge files, not live inventory.
-- No authentication, deployment or production server configuration; the Vite proxy is for local development only.
-- Browser checks run locally with headless Edge (`.local/`, not in the repository); see `docs/progress.md`.
+## Development results (one run each, 30 development scenarios, previous prompt)
+
+All runs used the same tools, data generation and limits (4 model calls and 8 tool calls per turn). They describe configurations **before** the current candidate. One run per configuration on known scenarios: no statistical or validation claim.
+
+| Configuration | Pass | Critical failures | Cost | Run time |
+|---|---|---|---|---|
+| Haiku 5.5, full manual, no cache (`0b5879238a78`) | 26/30 | 0 | US$0.0956 | 191 s |
+| Haiku 5.5, full manual, 5-min cache (`14a0f85d715d`) | 26/30 | 0 | US$0.0280 | 182 s |
+| Haiku 5.5, BM25 top-4 sections (`7f757562976b`) | 21/30 | 1 | US$0.0547 | 190 s |
+| GPT-6 Luna, full manual (`61a77ba13d48`) | 15/30 | 0 | US$0.0106 | 202 s |
+
+With the cache, 1 call wrote ~8.2k prompt tokens and 95 calls read them (provider-reported usage). Common Haiku failures were omissions (alternatives only offered, nearest supported installment missing, delivery time, tracking-code format); Haiku also sometimes claimed it had not checked something it had checked. The current candidate addresses both with general instructions and the lookup records; that is untested with the real model.
+
+## Code controls vs requested behaviour
+
+| Enforced by code | Asked of the model (measured by runs, not guaranteed) |
+|---|---|
+| Tool allowlist, strict arguments, read-only SQL, no private data or write tools | Using tools for every price, stock and payment statement |
+| Money computed in `commerce.py`; citations filtered to existing sections | Repeating tool values; citing the right sections |
+| Call, tool, time, output, prompt and history limits; no retries; no fallback model | Answering what was asked; offering alternatives |
+| Sessions, isolation, request-id dedup, data-generation pinning, lookup records written by the server | Not inventing orders, reservations, refunds or handoff |
+| Budget gate on every paid call; sanitized errors | Tone, scope, ignoring instructions found in data |
+
+## Known limitations
+
+- The catalog is a static snapshot of the challenge files, not live inventory; "available" means available in the catalog records.
+- Sessions are in memory: one worker, 30-minute idle expiry, 12 exchanges; nothing survives a restart.
+- The manual contradicts itself (two phone/WhatsApp numbers, two e-mail spellings, two installment rules); the assistant reports the divergence instead of choosing.
+- No customer or order data, purchases, reservations or handoff; no authentication or deployment; the Vite proxy is for local development only.
+- The ledger controls only application calls that go through it, not other spending on the provider accounts.
+- Quality numbers come from 30 known development scenarios, one run each; the reserved validation has not run.
 
 ## AI assistance
 
-This project is planned and developed with AI assistance. ChatGPT helped plan the case, the work breakdown and the development harness. Claude Code (Anthropic) helps implement and verify the code under the owner's direction. The owner reviews every change and makes all commits.
+This project is planned and developed with AI assistance. ChatGPT helped plan the case, the work breakdown and the development harness. Claude Code (Anthropic) helps implement, test and review the code and documents under the owner's direction. The owner reviews every change, decides and makes all commits.
