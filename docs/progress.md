@@ -1,11 +1,19 @@
 # Session handoff
 
-## Current state (2026-11-02, Luna 30-scenario run reviewed; Haiku batch blocked)
-- Git: `main` at `c6d47e4`; only this review's doc edits are uncommitted.
-- Linear: no connector. No card to Done: EMP-11/EMP-13 wait for a Haiku 30-scenario run; EMP-12 for pertinent per-turn references and an answer-quality comparison.
-- Haiku 30 (`126a30`): not executed, `AuthenticationError` at the first call; 1 `uncertain` op holds US$0.012236 until the owner reconciles it.
-- Luna 30 (`6ce137`, full manual): 15/30 pass, 0 listed critical failures, US$0.010597, 95 calls, 201.9 s; DEV-028 injection reached the model and was ignored; DEV-029 failure triggered, no price/stock invented.
+## Current state (2026-11-02, Haiku and Luna 30-scenario runs reviewed)
+- Git: `main` at `9d68808`; only this review's doc edits are uncommitted.
+- Linear: no connector. No card marked Done by this session; EMP-12 still needs an answer-quality comparison.
+- Haiku 30 (`46a802`, full manual): 26/30 pass (standard 24/28, perturbed 2/2), 0 critical, US$0.095644, 93 calls, 191.5 s. Reservation: false "I did not consult the system" self-corrections in DEV-020/021.
+- Luna 30 (`6ce137`, full manual): 15/30 pass, 0 listed critical failures, US$0.010597, 95 calls, 201.9 s.
+- Old Haiku op `126a30:68e51f38c894` still `uncertain`, US$0.012236 held, waiting for provider evidence.
 - EMP-12: per-turn policy key `evals/policy_references_by_turn.json` (44 turns, 16 scored) and `retrieval_eval --method by-turn`: BM25 (frozen) retrieves 18/23 required groups. The 0.38 of the first method stays as its exploratory proxy. Full manual stays the default and the baseline. Qwen suspended.
+
+## 2026-11-02 — Haiku 30-scenario run review and Haiku vs Luna comparison (offline, ledger read-only)
+- Report `20261102T211646Z-46a802` chosen by metadata (anthropic, full, all 30, `9d68808` clean; agent/prompt/tools/data same as the Luna run). Raw reports, prompt, criteria and ledger unchanged.
+- Operational: complete, 93 settled ops = report ids, cost recomputed with 0 mismatches, no hold. Fixtures: DEV-027/028/029 applied and exercised (injection reached the model; failure triggered once).
+- Assessed: Haiku 26/30 vs Luna 15/30, both 0 critical; common fails DEV-006, 011, 016, 030 (omissions). Haiku reservations: false self-corrections (DEV-020 t2-t3, DEV-021 t2), Markdown bold, verbose contact blocks, some uncited policy facts. Details in `docs/evaluation.md`; review in the ignored `evals/results/20261102T211646Z-46a802.review.md`.
+- Ledger: development US$0.176122 confirmed (282 settled), US$0.012236 held by the old uncertain op, US$6.811642 available; validation untouched. No paid or local call this session.
+- Owner pending: choose the main candidate (proposal: Haiku with the full manual); decide on the false self-correction issue before validation; next paid experiment Haiku `--policy-context bm25` once; provider evidence for the old op; reserved validation later.
 
 ## 2026-11-02 — EMP-12 per-turn policy references + Anthropic uncertain-op diagnosis (offline)
 - Key: `evals/policy_references_by_turn.json` `policy-refs-by-turn-1`, curated from the manual, turn messages/history and existing expectations (no model output, no reserved set); scenarios, expectations, contract and earlier reports unchanged. 30 scenarios / 44 turns checked in the file before writing. Classes: required (A, groups of equivalent sections), support (B: service guideline / tool rule, or related), application limits (C).
