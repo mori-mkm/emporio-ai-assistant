@@ -344,6 +344,7 @@ class Settings:
     cookie_secure: bool
     provider: str | None = None  # backend configuration only; None = the default for the mode
     ollama_url: str | None = None
+    prompt_cache: str = "off"  # Anthropic only: "off" or "system-5m"; never from the client
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -360,6 +361,7 @@ class Settings:
             cookie_secure=os.environ.get("EMPORIO_COOKIE_SECURE", "").lower() == "true",
             provider=os.environ.get("EMPORIO_PROVIDER") or None,
             ollama_url=os.environ.get("EMPORIO_OLLAMA_URL") or None,
+            prompt_cache=os.environ.get("EMPORIO_PROMPT_CACHE") or "off",
         )
 
 
@@ -387,6 +389,8 @@ def build_service(settings: Settings, generator=None, **kwargs) -> AssistantServ
 def make_generator(settings: Settings, **overrides):
     """The configured provider's generator; `overrides` are its settings fields."""
     provider = settings.provider or default_provider(settings.mode)
+    if settings.prompt_cache != "off" and provider != "anthropic":
+        raise AdapterConfigError("prompt caching is implemented for the anthropic provider only")
     if provider == "simulated":
         return SimulatedGenerator()
     if provider == "ollama":
@@ -404,4 +408,5 @@ def make_generator(settings: Settings, **overrides):
         return OpenAIGenerator(ledger, prices, OpenAISettings(**overrides))
     from .anthropic_adapter import GenerationSettings
 
-    return AnthropicGenerator(ledger, prices, GenerationSettings(**overrides))
+    cache = {"prompt_cache": settings.prompt_cache} if settings.prompt_cache != "off" else {}
+    return AnthropicGenerator(ledger, prices, GenerationSettings(**cache, **overrides))

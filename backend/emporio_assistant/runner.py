@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from functools import partial
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .budget import BudgetError
@@ -166,6 +167,7 @@ def service_executor(
             "generator": describe,
             "agent": asdict(service.agent.config),
             "policy_context": service.agent.policy.describe(),
+            "sdk": _sdk_version(describe.get("provider")),  # not part of the config hash
         },
         ledger_report=ledger.run_report if ledger is not None else None,
         trace=trace,
@@ -174,6 +176,15 @@ def service_executor(
         end_scenario=end_scenario,
         fixtures=True,
     )
+
+
+def _sdk_version(provider: str | None) -> dict | None:
+    if provider not in ("anthropic", "openai"):
+        return None
+    try:
+        return {"package": provider, "version": version(provider)}
+    except PackageNotFoundError:
+        return {"package": provider, "version": None}
 
 
 def simulated_executor() -> Executor:
@@ -384,6 +395,13 @@ def main(argv: list[str] | None = None) -> int:
         default="full",
         help="manual sections in the prompt: full (baseline) or BM25 top-k (EMP-12)",
     )
+    parser.add_argument(
+        "--prompt-cache",
+        choices=["off", "system-5m"],
+        default="off",
+        help="anthropic + full manual only: off (baseline) or one explicit 5-minute cache "
+        "breakpoint at the end of the system prompt (caches tools + system)",
+    )
     parser.add_argument("--confirm-paid-run", action="store_true")
     parser.add_argument(
         "--trace",
@@ -452,7 +470,9 @@ def _service_executor(args) -> tuple[Executor, str]:
         raise ValueError("--num-ctx and --num-predict apply to --executor local only")
     mode = "live" if live else "local" if local else "simulated"
     provider = {"live": args.provider, "local": "ollama", "simulated": "simulated"}[mode]
-    settings = with_changes(settings, mode=mode, provider=provider)
+    if args.prompt_cache != "off" and (provider != "anthropic" or args.policy_context != "full"):
+        raise ValueError("--prompt-cache needs --executor live --provider anthropic, full manual")
+    settings = with_changes(settings, mode=mode, provider=provider, prompt_cache=args.prompt_cache)
     overrides = {
         k: v for k, v in (("num_ctx", args.num_ctx), ("num_predict", args.num_predict)) if v
     }

@@ -1,9 +1,10 @@
 """Claude Messages API adapter (EMP-9). Every generation call goes through `guarded_call`.
 
 Scope is deliberately narrow: first-party Claude API, `claude-haiku-5-5`, global routing,
-standard tier, prompts below the 100k-token price tier, no prompt caching requested, no batch,
-no server tools. Anything else reported back in `usage` has no configured price and puts the
-ledger on hold.
+standard tier, prompts below the 100k-token price tier, no batch, no server tools. Prompt
+caching is off unless the backend/runner selects `system-5m` (one explicit 5-minute breakpoint at
+the end of the system prompt). Anything else reported back in `usage` has no configured price
+and puts the ledger on hold.
 """
 
 from __future__ import annotations
@@ -46,6 +47,20 @@ class GenerationSettings:
     max_output_tokens: int = 4_096  # includes thinking tokens
     max_prompt_tokens: int = 90_000  # below the 100k price tier
     call_timeout_s: float = 60.0
+    # "off" (baseline payload) or "system-5m". Backend/runner configuration only.
+    prompt_cache: str = "off"
+
+
+PROMPT_CACHE_MODES = ("off", "system-5m")
+CACHE_5M = {"type": "ephemeral", "ttl": "5m"}
+
+
+def system_param(system: str, prompt_cache: str) -> str | list[dict]:
+    """Off: the plain string, as before. system-5m: the same text in one block whose
+    breakpoint caches the prefix tools + system (instructions + manual)."""
+    if prompt_cache == "off":
+        return system
+    return [{"type": "text", "text": system, "cache_control": dict(CACHE_5M)}]
 
 
 STOPS = {
@@ -105,7 +120,7 @@ def from_content(content: list[dict], stop_reason: str | None, op_id: str | None
 
 
 def prompt_token_bound(
-    system: str, messages: list[dict], tools: list[dict], max_output_tokens: int
+    system: str | list[dict], messages: list[dict], tools: list[dict], max_output_tokens: int
 ) -> int:
     """Upper bound of input tokens without calling the token-counting API.
 
@@ -213,6 +228,8 @@ class AnthropicGenerator:
             and settings.max_prompt_tokens > price.max_prompt_tokens
         ):
             raise AdapterConfigError("max_prompt_tokens is above the priced tier")
+        if settings.prompt_cache not in PROMPT_CACHE_MODES:
+            raise AdapterConfigError(f"prompt_cache must be one of {PROMPT_CACHE_MODES}")
         self.ledger = ledger
         self.pricing = pricing
         self.settings = settings
@@ -220,7 +237,7 @@ class AnthropicGenerator:
 
     def describe(self) -> dict:
         s = self.settings
-        return {
+        out = {
             "provider": "anthropic",
             "model": s.model,
             "thinking": s.thinking,
@@ -231,12 +248,21 @@ class AnthropicGenerator:
             "call_timeout_s": s.call_timeout_s,
             "sdk_retries": 0,
         }
+        if s.prompt_cache != "off":  # off keeps the baseline description and hash
+            out["prompt_cache"] = {
+                "mode": s.prompt_cache,
+                "cache_control": CACHE_5M,
+                "breakpoint": "end of the single system block",
+                "cached_prefix": "tools + system (instructions + policy context)",
+            }
+        return out
 
     def create(
         self, *, system: str, messages: list[dict], tools: list[dict], context: CallContext
     ) -> ModelReply:
         s = self.settings
         messages = to_messages(messages)
+        system = system_param(system, s.prompt_cache)
         bound = prompt_token_bound(system, messages, tools, s.max_output_tokens)
         if bound > s.max_prompt_tokens:
             raise PromptTooLarge(f"prompt bound {bound} > {s.max_prompt_tokens}")
@@ -247,7 +273,7 @@ class AnthropicGenerator:
             provider="anthropic",
             model=s.model,
             # Prompt tokens fall in exactly one of the four prompt categories; reserving the
-            # bound in each is deliberately conservative (unrequested caching stays covered).
+            # bound in each is deliberately conservative: never assumes a cache hit.
             limits={
                 "input": bound,
                 "cache_write_5m": bound,

@@ -1,13 +1,21 @@
 # Session handoff
 
-## Current state (2026-11-02, Haiku BM25 run reviewed)
-- Git: `main` at `b21978d`; only this review's doc edits are uncommitted.
-- Haiku + BM25 (`6cd4eb`): 21/30 vs 26/30 full manual, US$0.054699 vs US$0.095644; losses DEV-013, 017, 022, 023, 029; DEV-022 possibly critical under the general rubric (owner decides). Full manual stays the baseline.
+## Current state (2026-11-02, DEV-022 severity corrected, prompt cache prepared)
+- Git: `main` at `efe1471`; this session's code, tests and docs are uncommitted.
+- Haiku + BM25 (`6cd4eb`): 21/30 vs 26/30 full manual, US$0.054699 vs US$0.095644; losses DEV-013, 017, 022, 023, 029; DEV-022 is a critical failure under the existing rubric (correction C1: it denies the §4.4 exclusions). Critical: full 0, BM25 1. Full manual stays the baseline; embeddings unmeasured.
+- Prompt cache: opt-in `--prompt-cache system-5m` (Anthropic, full manual), config `14a0f85d715d`; off by default with baseline payload and hash `0b5879238a78`. Paid run not executed.
 - Linear: no connector. No card marked Done by this session; EMP-12 still needs an answer-quality comparison.
 - Haiku 30 (`46a802`, full manual): 26/30 pass (standard 24/28, perturbed 2/2), 0 critical, US$0.095644, 93 calls, 191.5 s. Reservation: false "I did not consult the system" self-corrections in DEV-020/021.
 - Luna 30 (`6ce137`, full manual): 15/30 pass, 0 listed critical failures, US$0.010597, 95 calls, 201.9 s.
 - Old Haiku op `126a30:68e51f38c894` still `uncertain`, US$0.012236 held, waiting for provider evidence.
 - EMP-12: per-turn policy key `evals/policy_references_by_turn.json` (44 turns, 16 scored) and `retrieval_eval --method by-turn`: BM25 (frozen) retrieves 18/23 required groups. The 0.38 of the first method stays as its exploratory proxy. Full manual stays the default and the baseline. Qwen suspended.
+
+## 2026-11-02 — DEV-022 severity and Haiku prompt-cache preparation (offline, ledger read-only)
+- Correction C1 (appended to the ignored `20261102T212846Z-6cd4eb.review.md`; earlier text kept): DEV-022 BM25 t3 says the "sob encomenda" and "venda final" exchange exclusions "não constam na nossa política"; §4.4 (p. 4) lists both. Rubric clause "invented ... policy" → critical, regardless of the empty scenario list. Same criterion rechecked on the flagged statements of `6cd4eb`, `46a802` and `6ce137` (recheck note R1 in both other reviews): no other change. DEV-029's invented number stays non-critical: the clause does not name contact data, evidence insufficient for more.
+- Prompt cache: `GenerationSettings.prompt_cache` (`off` | `system-5m`), backend `EMPORIO_PROMPT_CACHE`, runner `--prompt-cache`; refused for other providers and BM25. One `cache_control: {"type": "ephemeral", "ttl": "5m"}` on a single system block with the identical text. Report adds `configuration.generator.prompt_cache` and `configuration.sdk` (anthropic 2.3.0). Official prompt-caching and pricing pages checked; `config/pricing.json` matches. Accounting, reservations, retries and caps unchanged.
+- Tests: `backend/tests/test_prompt_cache.py` (9, fake SDK): baseline payload off, marker placement, identical text, own hash, invalid config, CLI refusals, write-then-read pricing, reservation not reduced, incomplete cache usage held. `verify.py --mode app`: 272 passed, ruff, frontend build OK.
+- Ledger: unchanged (US$0.230821 confirmed, 384 settled, old op `20261101T235500Z-126a30:68e51f38c894` uncertain with US$0.012236 held). No paid or local call.
+- Owner pending: review and commit; then run the cache batch once (command in `docs/evaluation.md`); false self-corrections before reserved validation; provider evidence for the old op. EMP-12/EMP-13 and the architecture choice stay open.
 
 ## 2026-11-02 — Haiku BM25 vs full-manual review (offline, ledger read-only)
 - Report `20261102T212846Z-6cd4eb` chosen by metadata (anthropic, bm25, all 30, `b21978d` clean); only the policy selection differs from `46a802`; per-turn selections equal the offline by-turn run. Raw reports, prompt, data, criteria, retriever and ledger unchanged.
