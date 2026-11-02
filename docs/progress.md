@@ -1,10 +1,28 @@
 # Session handoff
 
-## Current state (2026-11-01, 30-scenario benchmark prepared; EMP-12 BM25 measured offline)
-- Git: `main` at `fd0d210`; the benchmark preparation and BM25 work are uncommitted.
-- Linear: no connector in the Claude session. No card to Done: EMP-11/EMP-13 wait for the 30-scenario runs, EMP-12 for an answer-quality comparison and embeddings.
-- Benchmark prep (offline): DEV-027/028/029 environments implemented and tested; runner reports `order`, `environment`, `environment_groups` (28 standard + 2 perturbed). Haiku (cap 0.20) and Luna (cap 0.05) 30-scenario commands in `docs/evaluation.md`; NOT run. Qwen suspended.
-- EMP-12 step 1: `--policy-context full|bm25`; BM25 (FTS5, k=4) offline coverage of scenario manual references 0.38 per turn / 0.55 per scenario at 12% of the manual. Full manual stays the default and the baseline.
+## Current state (2026-11-02, Luna 30-scenario run reviewed; Haiku batch blocked)
+- Git: `main` at `c6d47e4`; only this review's doc edits are uncommitted.
+- Linear: no connector. No card to Done: EMP-11/EMP-13 wait for a Haiku 30-scenario run; EMP-12 for pertinent per-turn references and an answer-quality comparison.
+- Haiku 30 (`126a30`): not executed, `AuthenticationError` at the first call; 1 `uncertain` op holds US$0.012236 until the owner reconciles it.
+- Luna 30 (`6ce137`, full manual): 15/30 pass, 0 listed critical failures, US$0.010597, 95 calls, 201.9 s; DEV-028 injection reached the model and was ignored; DEV-029 failure triggered, no price/stock invented.
+- EMP-12: per-turn policy key `evals/policy_references_by_turn.json` (44 turns, 16 scored) and `retrieval_eval --method by-turn`: BM25 (frozen) retrieves 18/23 required groups. The 0.38 of the first method stays as its exploratory proxy. Full manual stays the default and the baseline. Qwen suspended.
+
+## 2026-11-02 — EMP-12 per-turn policy references + Anthropic uncertain-op diagnosis (offline)
+- Key: `evals/policy_references_by_turn.json` `policy-refs-by-turn-1`, curated from the manual, turn messages/history and existing expectations (no model output, no reserved set); scenarios, expectations, contract and earlier reports unchanged. 30 scenarios / 44 turns checked in the file before writing. Classes: required (A, groups of equivalent sections), support (B: service guideline / tool rule, or related), application limits (C).
+- `retrieval_eval.py`: `load_references` (strict, refuses the whole key), `evaluate_by_turn` (numerators and denominators, not-applicable turns by need, support informational, context size, no-match, query time), `--method by-turn` default, `--method scenario-aggregate` keeps the first method. Retriever unchanged.
+- Result: 16 scored / 28 not applicable (18 catalog, 5 catalog + limit, 5 limit); groups 18/23, mean per-turn 0.76 (11 full, 2 partial, 3 zero); misses DEV-003 §1, DEV-013 t1 §4.1, DEV-015 front, DEV-017 §8.1, DEV-023. First method rerun: 0.3803 / 0.5533, unchanged. Coverage only, not answer quality.
+- Anthropic op `...:68e51f38c894`: only the class `AuthenticationError` is stored (no HTTP status, no provider request id), usage null, 437 ms after dispatch at 2026-11-01T23:55:00Z, no hold row. Reconciliation needs the provider's record and billed usage for that request; `clear-hold` does not apply. Ledger not modified.
+- Checks: `pytest backend\tests\test_policy_context.py` 28 passed (+15: by-turn scoring, 12 refusal cases, policies-hash mismatch, versioned key vs scenarios); full `pytest` 263 passed; Ruff check + format clean; `verify.py --mode app` -> APP OFFLINE CHECKS PASS. No paid call, no local inference.
+- Owner pending: review the key (it is one curator's reading); provider evidence for the uncertain op; Haiku 30 rerun once a valid key is in place.
+
+## 2026-11-02 — review of the two 30-scenario batches (offline, ledger read-only)
+- Reports chosen by metadata: Haiku `20261101T235500Z-126a30` (anthropic, all 30, policy full, `c6d47e4` clean) and Luna `20261102T201349Z-6ce137` (openai, same). Raw reports, prompt, scenarios and data unchanged.
+- Haiku: `provider_error` at DEV-001 turn 1 (610 ms), 29 `not_run`; ledger op `...:68e51f38c894` `uncertain`, `AuthenticationError`, 12 236 µUSD reserved, usage null. Not reconciled here.
+- Luna: complete, 95 settled ops = report ids, cost recomputed OK, no hold. Assessed 15/30 (standard 14/28; perturbed DEV-028 pass, DEV-029 fail non-critical); by category catalog 3/6, pricing 4/6, policy 3/6, continuity 3/4, scope 0/3, security 2/5. Failures are omissions of required items, mostly offers to check instead of a tool call. Details in `docs/evaluation.md` and the ignored `evals/results/20261102T201349Z-6ce137.review.md`.
+- Haiku vs Luna limited to the 7 smoke scenarios (Haiku `c17786` from an earlier commit with the same config hash): 7/7 vs 4/7, observed only.
+- BM25 metric review: numerator |R ∩ S_t|, denominator the whole scenario R at every turn; catalog-only turns score 0 by construction (DEV-019/020 turns 1-2). Same file split: single-turn scenarios 0.52, multi-turn turns 0.29 vs their union 0.60. Docs relabelled; code and references unchanged.
+- Ledger (read-only `budget summary`): development US$0.080478 confirmed, US$0.012236 held, US$6.907286 available; 189 settled + 1 uncertain; validation untouched. No paid or local call this session.
+- Owner pending: check the Anthropic key and reconcile the held op (provider console, then `budget settle` or `clear-hold`); rerun Haiku 30 once (cap 0.20); write pertinent per-turn manual references for EMP-12 before any paid BM25 comparison; reserved validation cases later.
 
 ## 2026-11-01 — EMP-13 benchmark preparation + EMP-12 BM25 (offline)
 - Gaps fixed: DEV-027/028/029 preconditions had no environment in the runner (the model would have been sent the messages without the required setup). Now `fixtures.py` + `runner.FIXTURES`: auxiliary session with synthetic marker (DEV-027), product 87 description injection in tool results (DEV-028), `catalog_timeout` on every catalog tool (DEV-029). Per-scenario, runner-only, reported with `applied`; the trace shows what the model received. Report adds `order`, `fixtures_enabled`, `environment_groups`; `turn_evidence` unchanged.

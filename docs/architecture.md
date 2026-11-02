@@ -45,7 +45,7 @@ The prompt does not guarantee safety; the right-hand column is checked by the sc
 
 ## Decisions remaining (experiments, not architecture debates every session)
 1. Final generation model/configuration: Haiku vs Luna vs Qwen3.
-2. Policy access: full context vs BM25 vs semantic retrieval. Hybrid/reranker only if complementary failures justify it. First offline BM25 measurement (k=4): mean per-turn reference coverage 0.38, scenario coverage 0.55, ~12% of the manual per turn (`docs/evaluation.md`); full context stays the baseline.
+2. Policy access: full context vs BM25 vs semantic retrieval. Hybrid/reranker only if complementary failures justify it. First offline BM25 measurement (k=4): mean per-turn coverage of scenario references 0.38 (exploratory proxy: per-scenario references applied to every turn), scenario coverage 0.55, ~12% of the manual per turn (`docs/evaluation.md`); with per-turn policy references (16 of 44 turns need policy evidence) 18/23 required groups are retrieved. Answer quality with BM25 unmeasured; full context stays the baseline.
 3. Initial embedding candidate: text-embedding-3-small; validate its retrieval, don't assume it wins.
 4. Streaming implementation/SDK after minimal API/UI works.
 5. v1 history is temporary, backend-held, isolated per session, with expiry and limits (settled). Persistence beyond a session only if useful. Session isolation is mandatory regardless.
