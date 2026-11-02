@@ -1,12 +1,20 @@
 # Session handoff
 
-## Current state (2026-11-02, Haiku and Luna 30-scenario runs reviewed)
-- Git: `main` at `9d68808`; only this review's doc edits are uncommitted.
+## Current state (2026-11-02, Haiku BM25 run reviewed)
+- Git: `main` at `b21978d`; only this review's doc edits are uncommitted.
+- Haiku + BM25 (`6cd4eb`): 21/30 vs 26/30 full manual, US$0.054699 vs US$0.095644; losses DEV-013, 017, 022, 023, 029; DEV-022 possibly critical under the general rubric (owner decides). Full manual stays the baseline.
 - Linear: no connector. No card marked Done by this session; EMP-12 still needs an answer-quality comparison.
 - Haiku 30 (`46a802`, full manual): 26/30 pass (standard 24/28, perturbed 2/2), 0 critical, US$0.095644, 93 calls, 191.5 s. Reservation: false "I did not consult the system" self-corrections in DEV-020/021.
 - Luna 30 (`6ce137`, full manual): 15/30 pass, 0 listed critical failures, US$0.010597, 95 calls, 201.9 s.
 - Old Haiku op `126a30:68e51f38c894` still `uncertain`, US$0.012236 held, waiting for provider evidence.
 - EMP-12: per-turn policy key `evals/policy_references_by_turn.json` (44 turns, 16 scored) and `retrieval_eval --method by-turn`: BM25 (frozen) retrieves 18/23 required groups. The 0.38 of the first method stays as its exploratory proxy. Full manual stays the default and the baseline. Qwen suspended.
+
+## 2026-11-02 — Haiku BM25 vs full-manual review (offline, ledger read-only)
+- Report `20261102T212846Z-6cd4eb` chosen by metadata (anthropic, bm25, all 30, `b21978d` clean); only the policy selection differs from `46a802`; per-turn selections equal the offline by-turn run. Raw reports, prompt, data, criteria, retriever and ledger unchanged.
+- Operational: complete; 102 settled ops = report ids, 0 cost mismatches, no hold; fixtures DEV-027/028/029 applied and exercised.
+- Assessed: 21/30 (standard 20/28, perturbed 1/2) vs 26/30; losses DEV-013 t1 (§4.1 not retrieved), DEV-017 (§8.1 not retrieved + no price lookup), DEV-022 t3 (false retraction of §4.4), DEV-023 (§1/§7.1 not retrieved), DEV-029 (invented phone number). DEV-003 unaffected by its miss. Details in `docs/evaluation.md`; review in the ignored `evals/results/20261102T212846Z-6cd4eb.review.md`.
+- Ledger: development US$0.230821 confirmed (384 settled), US$0.012236 held by the old uncertain op (untouched), US$6.756943 available; validation untouched. No paid or local call this session.
+- Owner pending: decide on DEV-022 under the general rubric; next experiment proposal: prompt caching on the full manual (config change, new hash) before embeddings; provider evidence for the old op.
 
 ## 2026-11-02 — Haiku 30-scenario run review and Haiku vs Luna comparison (offline, ledger read-only)
 - Report `20261102T211646Z-46a802` chosen by metadata (anthropic, full, all 30, `9d68808` clean; agent/prompt/tools/data same as the Luna run). Raw reports, prompt, criteria and ledger unchanged.
