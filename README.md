@@ -86,10 +86,11 @@ The live ledger is created once by the owner: `.\.venv\Scripts\python.exe -m emp
 
 ## Run (two terminals)
 
-Terminal 1, API (simulated shown; run **one worker**, sessions are in memory):
+Terminal 1, API (simulated shown; run **one worker**, sessions are in memory). Clear live-only variables first: simulated mode refuses `EMPORIO_PROVIDER=anthropic` and the chat stays disabled.
 
 ```powershell
 Set-Location backend
+Remove-Item Env:EMPORIO_PROVIDER, Env:EMPORIO_PROMPT_CACHE, Env:EMPORIO_POLICY_CONTEXT -ErrorAction SilentlyContinue
 $env:EMPORIO_ASSISTANT_MODE = 'simulated'
 ..\.venv\Scripts\python.exe -m uvicorn emporio_assistant.main:app --host 127.0.0.1 --port 8000
 ```
@@ -102,6 +103,8 @@ npm run dev
 ```
 
 Open http://127.0.0.1:5173. Vite forwards `/api/*` to the API, so the browser talks to one origin. In simulated mode a banner and a "Resposta simulada" badge mark every reply.
+
+The page is laid out like an instrument store (black/white/red, display type; visual reference audited in [docs/PRIDE_DESIGN_AUDIT.md](docs/PRIDE_DESIGN_AUDIT.md)) and is labelled "Demo conceitual de atendimento com IA". The header question box, the category buttons and the suggested questions send through the same chat and continue the current conversation; "Nova conversa" starts a new one. Answers are plain text with the cited manual sections (no product cards: the API does not return structured products). Fonts come from Google Fonts; without network the page falls back to system fonts. The redesign changes only the interface: the agent, prompt, tools and the validated configuration are unchanged.
 
 ## Offline checks
 
