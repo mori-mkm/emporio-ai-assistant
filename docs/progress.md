@@ -1,6 +1,27 @@
 # Session handoff
 
-## Current state (2026-11-02, cache run reviewed; memory, instructions, validation path prepared)
+## Current state (2026-11-03, candidate run reviewed; embeddings implemented, not measured)
+- Git: `main` at `fb0382c`; this session's code, tests and docs are uncommitted (owner commits).
+- Candidate run `20261102T225400Z-d86dfc` (config `d9f674fcc08d`: prompt revision 2 + lookup records + `system-5m`, commit `fb0382c` clean): 27/30, 0 critical, US$0.030396, 97 calls, 193.8 s. Gains vs `2cee3f` (old prompt): DEV-006, DEV-011; loss: DEV-013 (omits "5 days is within the 7-day window"); DEV-016 and DEV-030 still fail (omissions). One run: not consistency evidence. Provisional choice: full manual + `system-5m` with this candidate.
+- API and runner now build the same configuration from the same settings (default 4 model calls; `EMPORIO_POLICY_CONTEXT`); the API reproduces `d9f674fcc08d` with `EMPORIO_ASSISTANT_MODE=live`, `EMPORIO_PROVIDER=anthropic`, `EMPORIO_PROMPT_CACHE=system-5m`.
+- Validation: scenario and manifest files are read once per run; the bytes hashed are the bytes run. Not run, nothing frozen.
+- Embeddings (`text-embedding-3-small`, 1536, cosine, k=4, BM25 corpus/query/expansion): implemented and tested offline with a fake client; index build and every query are budget-guarded; **not measured** (no paid call made). EMP-12 stays open.
+- Clean install from a clone-equivalent copy (new venv, `pip -c constraints`, `npm ci`): `verify.py --mode app` PASS, `prepare_data` OK, scenario references OK.
+- Ledger (read-only): development US$0.289263 confirmed (577 settled), old op uncertain with US$0.012236 held, available US$6.698501; validation US$0.
+- Open: EMP-12/13/14/15/16 not Done. Linear: no connector.
+
+## 2026-11-03 — candidate review, API/runner config, single-read validation, embeddings, clean install (offline)
+- Candidate `d86dfc` reviewed against `2cee3f` with the existing criteria and the global critical rubric (review in the ignored `evals/results/20261102T225400Z-d86dfc.review.md`, summary in `docs/evaluation.md`). Ledger: 97 ops = report ids, US$0.030396, matches the owner's summary.
+- Config: `AgentConfig.max_model_calls` default 4 (the API used 5); runner/freeze CLI defaults read it; `Settings.policy_context` + `assistant.make_policy` shared by API and runner; prompt cache refused with a non-full policy in both. Test: `test_api_and_runner_build_the_same_configuration`.
+- Validation integrity: `runner.main` reads the scenario file once and passes the bytes to the freeze check and to `run()`; the manifest is hashed and parsed from one read; reports record `scenarios_sha256`. Tests: file changed after the manifest is refused before any client; file swapped between check and run does not run the new content.
+- Memory: owner decision kept (records only for answered turns; no record does not mean no attempt). Anthropic-path tests already covered records from real tools, trace off, forged text, argument escaping and request-id idempotency; added: the public reply never shows the record.
+- Embeddings: `embeddings.py` (OpenAI client, retries off, timeout, `guarded_call`, input-only usage, response validation) and `policy_context.EmbeddingPolicy` (explicit paid index build with reuse by content key, refusal of missing/incompatible index, in-memory query cache, parent expansion, op ids in the turn, retrieval inside the turn time limit). Price entry `config/pricing.json` `2026-11-02.1` (US$0.02/M input, official docs checked 2026-11-02). `retrieval_eval --policy embeddings` (paid, by-turn, cap <= US$0.05) reports index and query cost apart. Freeze pins the index file for the embeddings policy. Tests: `backend/tests/test_embeddings.py`.
+- Exporter keeps the executed language (Portuguese by default); no translation.
+- Clean install: `.local/clean-install` (copy of tracked + new files, new venv, documented commands); module origins checked (copy + new venv). oxlint skipped files under the parent's ignored `.local/` until an empty `.git` folder marked the copy root (lint then ran and passed, probe file detected).
+- No paid call, no local inference, no ledger change, no reserved case accessed.
+
+## Earlier current state (2026-11-02, before the candidate run, kept as history)
+### Current state (2026-11-02, cache run reviewed; memory, instructions, validation path prepared)
 - Git: `main` at `4b128d0`; this session's code, tests and docs are uncommitted (owner commits).
 - Cache run `2cee3f` (config `14a0f85d715d`): 26/30, 0 critical, same four failures as the uncached `46a802`; US$0.028046 vs US$0.095644; 1 cache write + 95 reads reported by the provider. Provisional: full manual + `system-5m`.
 - Candidate (not run): prompt revision 2 + server lookup records, config `d9f674fcc08d` (cache) / `30baf5c5f663` (off). Offline tests only; earlier results do not describe it.
@@ -236,7 +257,8 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews and commits this session's changes, runs the candidate's 30-scenario development regression once (command in `docs/evaluation.md`, cap US$0.10) and shares the run id. Then: review it, decide the configuration to freeze, write the freeze manifest after the commit, run the reserved validation, and finish the examples and the report PDF from the validated configuration.
+Matheus reviews and commits this session's changes, then runs the embeddings experiment (`docs/evaluation.md`, "Embeddings experiment"): A. index + by-turn retrieval (cap US$0.02); B. paired 30-scenario answer runs with the cache off (embeddings, BM25 and full manual with the current prompt). After review: choose retrieval (close EMP-12), repeat the finalists once, freeze from the committed HEAD, run the reserved validation, then export the final Portuguese examples and finish the report.
+(Previous next action, done: the candidate's development regression ran as `d86dfc` and is reviewed.)
 
 ## Update template
 - Date / EMP issue:
