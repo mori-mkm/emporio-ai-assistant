@@ -9,8 +9,8 @@ Answer repetitive customer questions (products, prices, stock, promotions, payme
 ## Current state (2026-11-03)
 
 - **Implemented and working end to end:** chat UI (React + TypeScript + Vite) -> FastAPI -> one agent -> read-only tools over a local SQLite snapshot of the challenge catalog, with the full store manual in the prompt.
-- **Measured:** real model runs on the 30 **development** scenarios, one run per configuration, reviewed by hand (results below). The current candidate (revised instructions + server-recorded lookup memory + prompt cache, config `d9f674fcc08d`) passed 27/30 with 0 critical failures in one run.
-- **Prepared only (not run):** an experimental embeddings retrieval (implemented and tested offline with a fake client) and the reserved validation run (10 owner-held cases, frozen configuration). Nothing is frozen yet; the final configuration still depends on the embeddings experiment.
+- **Final configuration (frozen at commit `0dc5253`, config `d9f674fcc08d`):** Anthropic Claude Haiku 5.5, the full store manual in the prompt, 5-minute prompt cache, at most 4 model calls per turn.
+- **Measured:** real model runs on the 30 **development** scenarios, reviewed by hand (results below): the final configuration passed 27/30 and 28/30 with 0 critical failures in its two runs. Embeddings and BM25 retrieval were measured as alternatives and not selected. On the **reserved validation** (10 cases, run once after the freeze): 9/10, 0 critical failures. This is supporting evidence from small suites, not statistical proof or a production SLA.
 
 ## Architecture
 
@@ -22,7 +22,7 @@ Browser (frontend/src) --text + request id--> FastAPI (main.py) --> AssistantSer
 
 - **One agent, no framework.** A bounded loop (max model calls, tool calls, time, output and prompt size per turn) is enough for this scope and keeps every limit in code. See [docs/architecture.md](docs/architecture.md).
 - **Tools own the facts.** `search_products`, `get_product`, `quote_price`, `list_categories`. Money is computed only in `commerce.py` (Decimal, ROUND_HALF_UP); the model repeats tool values. Details in [docs/tools.md](docs/tools.md).
-- **Full manual as policy context.** The whole manual (~8k tokens) with section ids and pages; the answer cites sections and the backend keeps only ids that exist. BM25 retrieval was measured and lost quality (below). An embeddings selector (`text-embedding-3-small`, top-4 sections, same query and expansion as BM25) is implemented behind the same selector contract but not measured; every embedding call goes through the budget ledger.
+- **Full manual as policy context.** The whole manual (~8k tokens) with section ids and pages; the answer cites sections and the backend keeps only ids that exist. BM25 and embeddings (`text-embedding-3-small`, top-4 sections) retrieval plug into the same selector contract; both were measured and scored below the full manual on this small manual (below), so they stay as non-default options. Every embedding call goes through the budget ledger.
 - **Prompt caching (Anthropic, opt-in).** One explicit 5-minute breakpoint at the end of the stable system prompt (instructions + manual).
 - **Ephemeral memory.** History lives in the API process, per session, with limits and a 30-minute idle expiry. Each earlier assistant reply carries a server-written record of the tool calls that really ran in that turn (tool, validated arguments, ok/failed, data generation; no prices or stock).
 - **Budget ledger.** Every paid call goes through one guarded path that reserves a worst-case cost, settles only complete provider usage and keeps the reservation when the outcome is unknown.
@@ -69,7 +69,7 @@ The backend reads **process environment variables** only (`.env.example` lists t
 |---|---|
 | unset (default) | Chat disabled (503 `assistant_not_configured`); health works. Never a mock or a paid call by default. |
 | `simulated` | Offline: real API, sessions, agent loop and tools; the model is replaced by a scripted reply that says it is simulated. Not evidence of model quality. |
-| `live` | Paid API. `EMPORIO_PROVIDER=anthropic` (default, Claude Haiku 5.5) or `openai` (GPT-6 Luna). Needs the key, verified prices and an existing live ledger. `EMPORIO_PROMPT_CACHE=system-5m` enables the Anthropic cache. `EMPORIO_POLICY_CONTEXT` = `full` (default), `bm25` or `embeddings` (experimental: also the OpenAI key and a prebuilt index). The current candidate is `live` + `anthropic` + `system-5m` with the default full manual, the same configuration (hash) the benchmark runner measured. |
+| `live` | Paid API. `EMPORIO_PROVIDER=anthropic` (default, Claude Haiku 5.5) or `openai` (GPT-6 Luna). Needs the key, verified prices and an existing live ledger. `EMPORIO_PROMPT_CACHE=system-5m` enables the Anthropic cache. `EMPORIO_POLICY_CONTEXT` = `full` (default), `bm25` or `embeddings` (experimental: also the OpenAI key and a prebuilt index). The final configuration is `live` + `anthropic` + `system-5m` with the default full manual, the same configuration (hash `d9f674fcc08d`) the runner measured and froze. |
 | `local` | Ollama `qwen3:8b` on a loopback address, no ledger. Suspended for evaluation (failed a critical scenario). |
 
 Set a key without echoing it; it lasts only for that PowerShell window and never reaches the browser, logs or reports:
@@ -116,21 +116,35 @@ Runs the harness tests, `ruff check`, `pytest` (fake provider clients) and the f
 
 ## Evaluation runs
 
-`python -m emporio_assistant.runner` runs the development scenarios through the same service as the API (`--help` lists the flags). Paid runs need `--executor live --confirm-paid-run --batch-cap-usd <= 0.25`; reports go to the git-ignored `evals/results/`. Method, commands and every reviewed run: [docs/evaluation.md](docs/evaluation.md). A separate `--suite validation` mode runs the owner's reserved cases on the validation budget after a freeze check; it has not been run. `python -m emporio_assistant.retrieval_eval` scores which manual sections a selector retrieves (BM25 offline; `--policy embeddings` makes paid, budget-guarded embedding calls). `python -m emporio_assistant.export` copies 3-5 observed development conversations, unchanged and in the language they ran (Portuguese), into Markdown; the final examples will come from the delivered configuration.
+`python -m emporio_assistant.runner` runs the development scenarios through the same service as the API (`--help` lists the flags). Paid runs need `--executor live --confirm-paid-run --batch-cap-usd <= 0.25`; reports go to the git-ignored `evals/results/`. Method, commands and every reviewed run: [docs/evaluation.md](docs/evaluation.md). A separate `--suite validation` mode runs the reserved cases on the validation budget after a freeze check (run once, result below). `python -m emporio_assistant.retrieval_eval` scores which manual sections a selector retrieves (BM25 offline; `--policy embeddings` makes paid, budget-guarded embedding calls). `python -m emporio_assistant.export` copies 3-5 observed development conversations, unchanged and in the language they ran (Portuguese), into Markdown.
 
-## Development results (one run each, 30 development scenarios)
+## Example conversations
 
-All runs used the same tools, data generation and limits (4 model calls and 8 tool calls per turn). One run per configuration on known development scenarios: observed differences, no statistical or validation claim. The reserved validation has not run.
+[examples/conversations.md](examples/conversations.md): five conversations from a real development run of the final configuration (`939445`, same config hash), exported unchanged in Portuguese as executed: a catalog search with a recommendation, price + stock + installments across turns, a return under the policy's conditions, installments where the manual's two rules disagree, and purchase/reservation/refund requests the assistant cannot perform.
 
-| Configuration | Prompt | Pass | Critical failures | Cost | Run time |
-|---|---|---|---|---|---|
-| Haiku 5.5, full manual, no cache (`0b5879238a78`) | previous | 26/30 | 0 | US$0.0956 | 191 s |
-| Haiku 5.5, full manual, 5-min cache (`14a0f85d715d`) | previous | 26/30 | 0 | US$0.0280 | 182 s |
-| Haiku 5.5, BM25 top-4 sections (`7f757562976b`) | previous | 21/30 | 1 | US$0.0547 | 190 s |
-| GPT-6 Luna, full manual (`61a77ba13d48`) | previous | 15/30 | 0 | US$0.0106 | 202 s |
-| **Candidate:** Haiku 5.5, full manual, 5-min cache, lookup records (`d9f674fcc08d`) | revision 2 | 27/30 | 0 | US$0.0304 | 194 s |
+## Development results (30 development scenarios)
 
-With the cache, one call writes the ~8.2-8.6k-token prompt prefix and every later call reads it (provider-reported usage). The candidate fixed two earlier omissions (alternatives for a coming-soon product, the nearest supported installment), lost one (it did not say a 5-day-old purchase is inside the 7-day return window) and still omits the metro delivery time and the tracking-code format. Instructions and memory changed together, so neither change is credited alone. Embeddings: not measured yet.
+All runs used the same tools, data generation and limits (4 model calls and 8 tool calls per turn), reviewed by hand with one strict reading. One to three runs per configuration on known development scenarios: observed differences, no statistical claim.
+
+| Configuration | Prompt | Run | Pass | Critical failures | Cost | Run time |
+|---|---|---|---|---|---|---|
+| Haiku 5.5, full manual, no cache (`0b5879238a78`) | previous | | 26/30 | 0 | US$0.0956 | 191 s |
+| Haiku 5.5, full manual, 5-min cache (`14a0f85d715d`) | previous | | 26/30 | 0 | US$0.0280 | 182 s |
+| Haiku 5.5, BM25 top-4 sections (`7f757562976b`) | previous | | 21/30 | 1 | US$0.0547 | 190 s |
+| GPT-6 Luna, full manual (`61a77ba13d48`) | previous | | 15/30 | 0 | US$0.0106 | 202 s |
+| Haiku 5.5, embeddings top-4, no cache (`7100cd7f80f5`) | revision 2 | `47015b` | 25/30 | 0 | US$0.0606 | 213 s |
+| Haiku 5.5, BM25 top-4, no cache (`6fad0d2d49cc`) | revision 2 | `3b0b67` | 24/30 | 1 | US$0.0589 | 206 s |
+| Haiku 5.5, full manual, no cache (`30baf5c5f663`) | revision 2 | `cc296f` | 28/30 | 0 | US$0.1074 | 204 s |
+| **Final:** Haiku 5.5, full manual, 5-min cache (`d9f674fcc08d`) | revision 2 | `d86dfc` | 27/30 | 0 | US$0.0304 | 194 s |
+| **Final** (repeat) | revision 2 | `939445` | 28/30 | 0 | US$0.0311 | 199 s |
+
+"Revision 2" is the current instructions plus server-written lookup records, measured together. The three cache-off revision-2 runs are the controlled retrieval comparison. Embeddings reduced the policy context to four sections but missed sections an answer needed (contacts, delivery times; English retrieval 1/3) and once stated contact data that is not in the manual. BM25 was the cheapest of these runs but told a customer to disregard true exchange exclusions (critical). The full manual gave the best observed quality. With the cache, one call writes the ~8.6k-token prompt prefix and every later call reads it, which cut the cost of the full manual by about 71% with no observed quality change. Full manual + 5-minute cache was therefore selected for this small, static manual. Known non-critical gaps: the metro delivery time (DEV-016) and the tracking-code format (DEV-030). Details: [docs/evaluation.md](docs/evaluation.md).
+
+## Reserved validation (10 cases, run once)
+
+The final configuration was frozen (commit, config hash, data hashes, rubric hash and validation file hash in a manifest) and run once on 10 reserved cases on a separate budget: 10/10 cases and 21/21 customer turns executed, no divergence from the freeze, **9/10 passed, 0 critical failures**, US$0.0144, 94 s. The one failure (VAL-008) correctly handled a damaged delivery and the order-lookup boundary but omitted the manual's transport-insurance statement; it stays a known limitation and nothing was tuned afterwards.
+
+Limitation: the reserved cases were written by the AI coding assistant after the configuration was selected, with knowledge of the project (not blind, not independent), and graded by the same reviewer. They were frozen before the run and the candidate was not changed after it. 9/10 on a small suite is supporting evidence, not proof of correctness or a production SLA.
 
 ## Code controls vs requested behaviour
 
@@ -150,8 +164,9 @@ With the cache, one call writes the ~8.2-8.6k-token prompt prefix and every late
 - The manual contradicts itself (two phone/WhatsApp numbers, two e-mail spellings, two installment rules); the assistant reports the divergence instead of choosing.
 - No customer or order data, purchases, reservations or handoff; no authentication or deployment; the Vite proxy is for local development only.
 - The ledger controls only application calls that go through it, not other spending on the provider accounts.
-- Quality numbers come from 30 known development scenarios, one run each; the reserved validation has not run.
+- Quality numbers come from 30 known development scenarios (one to three runs per configuration) and 10 reserved cases run once, authored after the configuration was selected; known non-critical gaps: metro delivery time, tracking-code format, transport insurance on a damaged delivery.
+- Prompt caching saves cost only when calls arrive within 5 minutes of each other (true in a batch, not guaranteed for sparse chat traffic).
 
 ## AI assistance
 
-This project is planned and developed with AI assistance. ChatGPT helped plan the case, the work breakdown and the development harness. Claude Code (Anthropic) helps implement, test and review the code and documents under the owner's direction. The owner reviews every change, decides and makes all commits.
+This project is planned and developed with AI assistance. ChatGPT helped plan the case, the work breakdown and the development harness. Claude Code (Anthropic) helps implement, test and review the code and documents under the owner's direction; at the owner's request it also wrote the 10 reserved validation cases and the hand reviews of the evaluation runs. The owner reviews every change, decides and makes all commits.
