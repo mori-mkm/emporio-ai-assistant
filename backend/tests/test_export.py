@@ -43,6 +43,14 @@ def report(**changes):
     return {**base, **changes}
 
 
+def test_export_keeps_portuguese_replies_verbatim():
+    reply = "Não. O desconto de PIX não se aplica sobre preço promocional: R$ 5.519,08."
+    data = report()
+    data["scenarios"][0]["turns"][0]["text"] = reply
+    out = export(data, SCENARIOS, IDS)
+    assert f"> {reply}" in out and "nothing is translated" in out
+
+
 def test_export_keeps_observed_turns_and_drops_internal_data():
     out = export(report(), SCENARIOS, IDS)
     assert "reply DEV-013 1" in out and "§4.1" in out and "`20990101T000000Z-abcdef`" in out

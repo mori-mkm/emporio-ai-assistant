@@ -47,6 +47,7 @@ def export(report: dict, scenarios: dict, ids: list[str]) -> str:
         f"{', '.join(report.get('data_generations') or [])}",
         "- Messages are the development scenarios' synthetic customer turns; replies are copied "
         "unchanged from the report. Not graded here; no expected answers included.",
+        "- Language: as executed (Portuguese by default); nothing is translated.",
     ]
     for sid in ids:
         spec, record = specs.get(sid), records.get(sid)
