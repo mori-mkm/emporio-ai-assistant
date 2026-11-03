@@ -1,6 +1,19 @@
 # Session handoff
 
-## Current state (2026-11-03, candidate run reviewed; embeddings implemented, not measured)
+## Current state (2026-11-03, policy-context experiment reviewed; development configuration selected, not frozen)
+- Git: branch `feat/embeddings-eval-foundation` at `b600d20`; this session changed only docs (uncommitted; owner commits).
+- Experiment (one run per policy, cache off, commit `b600d20` clean; `docs/evaluation.md`, "Policy-context experiment results"): embeddings `47015b` 25/30, 0 critical, US$0.060631; BM25 `3b0b67` 24/30, 1 critical (DEV-022), US$0.058905; full `cc296f` 28/30, 0 critical, US$0.107380. Embedding retrieval step A: required groups 21/23, pt-BR 20/20, English 1/3.
+- Final candidate repeat `20261103T031931Z-939445` (`d9f674fcc08d`): 28/30, 0 critical, failed DEV-016 and DEV-030, US$0.031084, 199.297 s; cache saved about 71% vs the computed uncached cost.
+- Decision (development evidence, not statistical, not validation): freeze **Haiku 5.5 + full manual + `system-5m` + 4 model calls** (`d9f674fcc08d`). DEV-016/030 stay documented non-critical gaps. Record in `docs/architecture.md` (EMP-14) and `docs/evaluation.md` ("Development configuration decision").
+- Not done: freeze manifest, reserved validation run. Nothing frozen; validation cases not accessed.
+- Ledger (read-only): development US$0.547373 confirmed (1061 settled), old op uncertain with US$0.012236 held, available US$6.440391; validation US$0.
+- Open: EMP-12/13/14/15/16 not Done. Linear: no connector.
+
+## 2026-11-03 — policy-context experiment and final repeat reviewed; configuration selected (offline docs)
+- Owner ran step A, B1-B3 and the final repeat; each run reviewed offline with the `d86dfc` criteria, global critical clause and C1 (reviews in the ignored `evals/results/<run_id>.review.md`). Run JSON files unchanged; no API call, rerun, code change, freeze or validation in this session.
+- Docs: `docs/evaluation.md` (results, final repeat, decision; rubric section unchanged, so the freeze rubric hash is unchanged), `docs/architecture.md` (EMP-14 record), this file.
+
+## Earlier current state (2026-11-03, candidate run reviewed; embeddings implemented, not measured; kept as history)
 - Git: `main` at `fb0382c`; this session's code, tests and docs are uncommitted (owner commits).
 - Candidate run `20261102T225400Z-d86dfc` (config `d9f674fcc08d`: prompt revision 2 + lookup records + `system-5m`, commit `fb0382c` clean): 27/30, 0 critical, US$0.030396, 97 calls, 193.8 s. Gains vs `2cee3f` (old prompt): DEV-006, DEV-011; loss: DEV-013 (omits "5 days is within the 7-day window"); DEV-016 and DEV-030 still fail (omissions). One run: not consistency evidence. Provisional choice: full manual + `system-5m` with this candidate.
 - API and runner now build the same configuration from the same settings (default 4 model calls; `EMPORIO_POLICY_CONTEXT`); the API reproduces `d9f674fcc08d` with `EMPORIO_ASSISTANT_MODE=live`, `EMPORIO_PROVIDER=anthropic`, `EMPORIO_PROMPT_CACHE=system-5m`.
@@ -257,8 +270,8 @@ None this session. Prior project API consumption: unknown.
 - `evals/results/` and `logs/` are provisional names; adjust when EMP-7 defines output paths. Decide data distribution (customers.csv contains personal fields) before EMP-5.
 
 ## Next action
-Matheus reviews and commits this session's changes, then runs the embeddings experiment (`docs/evaluation.md`, "Embeddings experiment"): A. index + by-turn retrieval (cap US$0.02); B. paired 30-scenario answer runs with the cache off (embeddings, BM25 and full manual with the current prompt). After review: choose retrieval (close EMP-12), repeat the finalists once, freeze from the committed HEAD, run the reserved validation, then export the final Portuguese examples and finish the report.
-(Previous next action, done: the candidate's development regression ran as `d86dfc` and is reviewed.)
+Matheus reviews and commits these docs, then from the clean committed HEAD writes and checks the freeze for `d9f674fcc08d` (full, `system-5m`, 4 model calls; `docs/evaluation.md`, "Reserved validation run"), runs the reserved validation once, reviews it, exports the final Portuguese examples and finishes the report (README/report results tables still show `d86dfc` and "embeddings not measured"). EMP issues stay open until the owner closes them.
+(Previous next action, done: the embeddings experiment A/B1-B3 and the finalist repeat `939445` ran and are reviewed; retrieval chosen: full manual.)
 
 ## Update template
 - Date / EMP issue:

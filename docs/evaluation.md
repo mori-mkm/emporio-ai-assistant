@@ -400,7 +400,7 @@ Identified by metadata: suite development, anthropic, claude-haiku-5-5, config `
 - Citations: no `dropped_sections`; the checked sections support the claims. Reservations: contacts still in 17 turns (18 before) despite "contacts only when needed"; answers not shorter (4 012 vs 3 919 words); unrequested blocks in DEV-006, 008, 017, 020 t2; DEV-017 keeps the §8.2 range without "most manufacturers".
 - Reading: acceptable for development (0 critical, 27/30), one run, known scenarios; not consistency evidence and not frozen. A one-scenario net difference is within what one run can vary.
 
-### Embeddings experiment (EMP-12; implemented offline 2026-11-03, not measured)
+### Embeddings experiment (EMP-12; implemented offline 2026-11-03; run and reviewed 2026-11-03, results below)
 Implementation (`embeddings.py`, `policy_context.EmbeddingPolicy`, tests `backend/tests/test_embeddings.py`, fake client and synthetic vectors only):
 - Model `text-embedding-3-small`, 1536 dimensions, cosine similarity, k=4, parent expansion, the same 29 sections (title + body) as BM25 and the same query (previous customer messages, up to 2, plus the current one; assistant text, records, references and expectations never used). No query rewriter, reranker, hybrid search or fallback to the full manual. Citations are limited to the delivered sections (same filter as BM25). Similarity ranks sections; it is not factual confidence and never reaches the customer.
 - Official docs checked 2026-11-02: US$0.02 per million input tokens; 1536 by default, `dimensions` may shorten; vectors normalized; 8192 input tokens; usage `prompt_tokens`/`total_tokens`. SDK `openai` 3.42.1: `embeddings.create(model, input, dimensions, encoding_format, timeout)`. Price entry in `config/pricing.json` `2026-11-02.1` (input only).
@@ -437,7 +437,46 @@ Remove-Item Env:OPENAI_API_KEY
 ```
 If step A fails or the index is missing, B1 refuses before any paid answer call (`retrieval_index_unavailable`). A batch stopped by its cap lists `not_run`; never continue automatically.
 
-### Reserved validation run (prepared offline; not run, configuration not frozen)
+### Policy-context experiment results (A and B, reviewed offline 2026-11-03)
+All runs at commit `b600d20` (clean), generation `20261101T125243264432Z-10abfa`, current prompt and lookup memory, Haiku 5.5, 4 model calls / 8 tools / 90 s, fixtures on, cache off (provider usage shows no cache read or write). One run per policy, graded by hand with the same criteria, strict reading, global critical clause and correction C1 as `d86dfc`. Detailed reviews in the ignored `evals/results/<run_id>.review.md`.
+- A. Embeddings retrieval (`retrieval-embeddings-policy-refs-by-turn-1-by-turn-1-20261103T022521Z.json`, same by-turn key as BM25): required groups 21/23 (91.3%), mean turn coverage 95.83%, pt-BR 20/20, English 1/3, mean query latency 555.75 ms, no scored turn without a selection. Ledger: US$0.000110 for the index and the queries.
+
+| Policy (config) | Run | Pass | Critical | Failed | Cost | Duration |
+|---|---|---|---|---|---|---|
+| Embeddings top-4 (`7100cd7f80f5`) | `20261103T023228Z-47015b` | 25/30 | 0 | 004, 005, 015, 017, 030 | US$0.060631 | 213.407 s |
+| BM25 top-4 (`6fad0d2d49cc`) | `20261103T023958Z-3b0b67` | 24/30 | 1 (DEV-022) | 013, 016, 017, 022, 023, 030 | US$0.058905 | 206.469 s |
+| Full manual (`30baf5c5f663`) | `20261103T024657Z-cc296f` | 28/30 | 0 | 016, 030 | US$0.107380 | 203.875 s |
+
+- Embeddings: every turn received 4 sections, but answers depended on what was retrieved. DEV-004 says the manual gives no Campo Grande delivery time (§5.1 not selected; it says 1-3 business days); DEV-005 gives two phone numbers and two e-mail addresses that are not in the manual (no contact section selected): a contact hallucination, non-critical under the rubric as read in C1 (contact data is not named in the critical clause) but an unsupported fact; DEV-015 (English) gives one WhatsApp number and says the excerpt has no e-mail or address (the English retrieval miss of step A); DEV-025 t2 retracts true contact and hours information when those sections are not selected (false self-correction; scenario still passes, as BM25 DEV-025 in `6cd4eb`); DEV-017 no tool call, so no promotional price; DEV-030 tracking-code format missing. It also passed DEV-013 and DEV-016, which the full-manual runs have missed at least once. 44 embedding queries cost US$0.000044 (0.07% of the run); the rest of its cost is Haiku input for the selected sections.
+- BM25: 13 turns with no section. DEV-022 t3 tells the customer to disregard the §4.4 exchange exclusions it gave in t2 (critical: contradicted policy, the same pattern as C1); DEV-013 t1 says it cannot access the return policy; DEV-017 lacks the 90-day legal warranty (§8.1 not selected); DEV-023 stopped at the call limit; DEV-016 and DEV-030 omissions.
+- Full manual: two non-critical omissions (DEV-016 metro 1-3 business days; DEV-030 BR + 9 + BR format), no unsupported claim found.
+- Reading: on this manual, this development set and this setup, full context outperformed both retrieval policies; BM25 produced one critical policy contradiction, embeddings produced retrieval-dependent omissions and one contact hallucination. One run per policy: observed differences that support an engineering decision, not statistical superiority, and not a general claim that embedding retrieval is worse than full context. The manual is small (~8.6k tokens), which favours full context.
+
+### Final candidate repeat (`20261103T031931Z-939445`, reviewed offline 2026-11-03)
+Config `d9f674fcc08d` (the same hash as `d86dfc`): Anthropic Haiku 5.5, full manual, `system-5m`, 4 model calls; commit `b600d20` clean, same generation, limits and fixtures.
+- Operational: 30/30 scenarios, 44/44 turns, no error; 99 settled ops = report op ids, US$0.031084, no hold; 199.297 s.
+- Cache (provider usage): 1 write of 8 590 tokens (first call), 98 reads of the same 8 590-token system prefix; input 64 320, output 30 224. Counterfactual without cache for the same tokens (computed): US$0.106585, about 71% more; the measured uncached `cc296f` cost US$0.107380.
+- Assessed: **28/30** (standard 26/28, perturbed 2/2), **0 critical**. Failed: DEV-016 (metro 1-3 business days missing), DEV-030 (tracking-code format missing), both non-critical omissions. No unsupported price, stock, promotion, payment, delivery, return, warranty or tracking claim found; every "consultei agora" had a tool call in that turn; no false self-correction.
+
+| Full-manual run | Cache | Pass | Critical | Failed | Cost |
+|---|---|---|---|---|---|
+| `20261102T225400Z-d86dfc` | system-5m | 27/30 | 0 | 013, 016, 030 | US$0.030396 |
+| `20261103T024657Z-cc296f` | off | 28/30 | 0 | 016, 030 | US$0.107380 |
+| `20261103T031931Z-939445` | system-5m | 28/30 | 0 | 016, 030 | US$0.031084 |
+
+DEV-013 passed or failed with the same hash, so a one-scenario difference is within run-to-run variation.
+
+### Development configuration decision (2026-11-03)
+Selected for the freeze: **Anthropic Claude Haiku 5.5, full manual, `system-5m`, `max_model_calls` 4** (config `d9f674fcc08d`; prompt revision 2, lookup records, 8 tool calls, 90 s per turn). Reasons, from the development evidence above:
+1. Full context outperformed BM25 and embeddings in the controlled cache-off comparison (28 vs 24 and 25 of 30).
+2. BM25 produced one critical policy contradiction; embeddings produced retrieval-dependent omissions and one unsupported contact statement.
+3. Full context had 0 critical failures in every full-context run observed with the current prompt (`d86dfc`, `cc296f`, `939445`).
+4. Full + `system-5m` matched uncached full quality (28/30 each, same failures) at about 29% of its cost (US$0.031084 vs US$0.107380); two cached runs scored 27/30 and 28/30; no quality regression from the cache was observed.
+5. DEV-016 and DEV-030 stay as documented non-critical gaps; they are not tuned now, to avoid fitting the prompt to the development set.
+6. These are 30 known development scenarios with one to three runs per configuration: the evidence supports the engineering choice but is not statistical proof, and it says nothing measured yet about the 10 reserved validation cases, which have not been seen or run.
+Not done yet: the freeze manifest (owner, from a clean committed HEAD that includes this text) and the reserved validation run. BM25 and embeddings stay in the code as measured, non-default alternatives.
+
+### Reserved validation run (prepared offline; not run; configuration selected 2026-11-03, not frozen yet)
 - Contract: `scenarios.validate_validation`: `suite: "reserved-validation"`, exactly VAL-001 to VAL-010, the same per-scenario fields, checks and expectation keys as the development set, `smoke` false, no smoke suite. The development contract (`validate_structure`, DEV-001 to DEV-030) is unchanged and each validator refuses the other's file.
 - Selection: only the owner's CLI, `--suite validation`, never the API. Requires `--executor live --provider anthropic`, `--confirm-paid-run`, `--confirm-validation-run`, `--batch-cap-usd` (runner ceiling US$0.25), `--scenarios`, `--out-dir` and `--freeze-manifest`, each outside the repository or in a git-ignored private folder (`.local/`, `.private/`, `evals/holdout/`); no `--smoke` or `--ids` (all ten once). Calls are charged to the ledger's `validation` budget (US$2.00 cap), never `development`. No development fixture applies. No automatic continuation or repetition.
 - Freeze: `python -m emporio_assistant.freeze write` (owner, after committing the candidate; refuses a dirty tree, an existing file or a tracked path) records commit, config hash and full configuration (model, effort, thinking, limits, cache, policy context, history format), Python/anthropic/pydantic versions, data generation with source, catalog and policies hashes, and criteria (rubric section hash, suite, validation file hash and contract version). The run recomputes the same fields before any client exists and refuses with the list of divergences (or a dirty tree); the report records `suite`, `budget`, `freeze_check` and `scenarios_sha256`. Expectations are never copied into prompts or reports.
