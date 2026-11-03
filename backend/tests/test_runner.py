@@ -1,6 +1,8 @@
 """Offline runner (EMP-7): simulated, records only what ran, never grades."""
 
 import json
+from dataclasses import asdict
+from decimal import Decimal
 
 from emporio_assistant.budget import InsufficientBudget
 from emporio_assistant.runner import DEFAULT_SCENARIOS, Executor, main, run, simulated_executor
@@ -344,6 +346,46 @@ def test_provider_must_match_the_mode_and_comes_only_from_backend_settings(gener
         with pytest.raises(AdapterConfigError, match="not valid"):
             build_service(settings(mode, provider))
     assert build_service(settings("simulated", None)).mode == "simulated"
+
+
+def test_api_and_runner_build_the_same_configuration(generation_dir, tmp_path, monkeypatch):
+    """Same backend settings -> same agent configuration (hash, limits, policy) in the chat API
+    and in the benchmark runner. With only mode, provider and cache set, the API reproduces
+    the measured candidate d9f674fcc08d (4 model calls, full manual)."""
+    from types import SimpleNamespace
+
+    from conftest import FakeAnthropic
+
+    from emporio_assistant import anthropic_adapter, runner
+    from emporio_assistant.agent import AgentConfig
+    from emporio_assistant.assistant import Settings, build_service
+    from emporio_assistant.budget import Ledger
+
+    Ledger.create(tmp_path / "ledger.sqlite", "live")
+    monkeypatch.setattr(anthropic_adapter, "_new_client", lambda _timeout: FakeAnthropic())
+    for name, value in (("EMPORIO_DATA_DIR", generation_dir), ("EMPORIO_ASSISTANT_MODE", "live"),
+                        ("EMPORIO_LEDGER_PATH", tmp_path / "ledger.sqlite"),
+                        ("EMPORIO_PROVIDER", "anthropic")):  # fmt: skip
+        monkeypatch.setenv(name, str(value))
+    versions = {}
+    for policy, cache in (("full", "system-5m"), ("full", "off"), ("bm25", "off")):
+        monkeypatch.setenv("EMPORIO_PROMPT_CACHE", cache)
+        monkeypatch.setenv("EMPORIO_POLICY_CONTEXT", policy)
+        api = build_service(Settings.from_env())  # what main.py builds
+        args = SimpleNamespace(
+            executor="live", provider="anthropic", confirm_paid_run=True,
+            batch_cap_usd=Decimal("0.10"), num_ctx=None, num_predict=None, suite="development",
+            trace=False, prompt_cache=cache, policy_context=policy,
+            max_model_calls=AgentConfig.max_model_calls,  # the runner's CLI default
+        )  # fmt: skip
+        executor, _ = runner._service_executor(args)
+        assert executor.config_version == api.agent.version
+        assert executor.configuration["agent"] == asdict(api.agent.config)
+        assert executor.configuration["policy_context"] == api.agent.policy.describe()
+        versions[(policy, cache)] = api.agent.version
+    assert versions[("full", "system-5m")] == "d9f674fcc08d"
+    assert versions[("full", "off")] == "30baf5c5f663"
+    assert api.agent.config.max_model_calls == 4
 
 
 def test_frozen_haiku_candidate_configuration_hash():

@@ -182,7 +182,13 @@ def test_unknown_price_or_missing_limits_are_refused(ledger, pricing):
         guarded_call(ledger, pricing, request(limits={"input": 10, "output": 0}), ok({}))
     shipped = load_price_table(DEFAULT_PATH)  # versioned config: only verified entries
     assert not shipped.fictitious
-    assert set(shipped.models) == {("anthropic", "claude-haiku-5-5"), ("openai", "gpt-6-luna")}
+    assert set(shipped.models) == {
+        ("anthropic", "claude-haiku-5-5"),
+        ("openai", "gpt-6-luna"),
+        ("openai", "text-embedding-3-small"),  # input-only: no output category, none required
+    }
+    embedding = request(provider="openai", model="text-embedding-3-small", limits={"input": 1000})
+    assert reservation_micro_usd(embedding, shipped) == 20  # 1000 tokens x US$0.02 / 1M
     with pytest.raises(BudgetError, match="no verified price"):
         reservation_micro_usd(request(provider="anthropic", model="claude-haiku-4-5"), shipped)
 

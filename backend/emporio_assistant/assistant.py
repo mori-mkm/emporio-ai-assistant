@@ -351,6 +351,7 @@ class Settings:
     provider: str | None = None  # backend configuration only; None = the default for the mode
     ollama_url: str | None = None
     prompt_cache: str = "off"  # Anthropic only: "off" or "system-5m"; never from the client
+    policy_context: str = "full"  # full | bm25 | embeddings; backend configuration only
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -368,6 +369,7 @@ class Settings:
             provider=os.environ.get("EMPORIO_PROVIDER") or None,
             ollama_url=os.environ.get("EMPORIO_OLLAMA_URL") or None,
             prompt_cache=os.environ.get("EMPORIO_PROMPT_CACHE") or "off",
+            policy_context=os.environ.get("EMPORIO_POLICY_CONTEXT") or "full",
         )
 
 
@@ -389,7 +391,31 @@ def build_service(settings: Settings, generator=None, **kwargs) -> AssistantServ
         generator = make_generator(settings)
     if generator.mode != settings.mode:
         raise AdapterConfigError("the generator does not match the configured mode")
+    kwargs.setdefault("policy", make_policy(settings))
     return AssistantService(generator, settings.data_dir, **kwargs)
+
+
+def make_policy(settings: Settings):
+    """The manual-context selector for both the API and the runner (one place, same result)."""
+    from .policy_context import POLICIES
+
+    name = settings.policy_context
+    if name not in POLICIES:
+        raise AdapterConfigError(f"policy context must be one of {sorted(POLICIES)}")
+    if settings.prompt_cache != "off" and name != "full":
+        raise AdapterConfigError("prompt caching is implemented for the full manual only")
+    if name != "embeddings":
+        return POLICIES[name]()
+    if settings.mode != "live":  # every query is a paid call: never in simulated/local mode
+        raise AdapterConfigError("the embeddings policy needs live mode (paid, budget-guarded)")
+    from .embeddings import OpenAIEmbedder
+
+    try:
+        ledger, prices = Ledger(settings.ledger_path), load_price_table(settings.pricing_path)
+        embedder = OpenAIEmbedder(ledger, prices)  # unknown price raises PricingError here
+    except (BudgetError, PricingError) as error:
+        raise AdapterConfigError(f"embeddings not ready: {error}") from None
+    return POLICIES[name](embedder)
 
 
 def make_generator(settings: Settings, **overrides):

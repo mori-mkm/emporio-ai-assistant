@@ -60,8 +60,10 @@ def current_state(
     max_model_calls: int,
     scenarios: Path | None,
     data_dir: Path | None = None,
+    scenarios_bytes: bytes | None = None,
 ) -> dict:
-    """Everything the validation run must keep equal. Builds no client, reads no credential."""
+    """Everything the validation run must keep equal. Builds no client, reads no credential.
+    `scenarios_bytes`: content the caller already read (and will run); else read once here."""
     from .agent import HISTORY_FORMAT, AgentConfig, config_version
     from .anthropic_adapter import AnthropicGenerator, GenerationSettings
     from .policy_context import POLICIES
@@ -78,11 +80,26 @@ def current_state(
     data_dir = data_dir or Path(os.environ.get("EMPORIO_DATA_DIR") or DEFAULT_DATA_DIR)
     generation = active_generation(data_dir)
     criteria = {"rubric_sha256": _rubric_sha256(), "suite": "reserved-validation"}
-    if scenarios is not None:
-        criteria["validation_file_sha256"] = _sha256(scenarios)
-        criteria["contract_version"] = json.loads(scenarios.read_text(encoding="utf-8")).get(
-            "contract_version"
-        )
+    if scenarios_bytes is None and scenarios is not None:
+        scenarios_bytes = scenarios.read_bytes()
+    if scenarios_bytes is not None:  # hash and contract from the same bytes
+        criteria["validation_file_sha256"] = hashlib.sha256(scenarios_bytes).hexdigest()
+        criteria["contract_version"] = json.loads(scenarios_bytes).get("contract_version")
+    data = {
+        "generation": generation.id,
+        "sources_sha256": _source_hashes(generation.catalog),
+        "catalog_sha256": _sha256(generation.catalog),
+        "policies_sha256": _sha256(generation.policies),
+    }
+    if policy.mode == "embeddings":  # provider-made vectors: the exact index file is frozen
+        from .tools import CatalogSnapshot
+
+        with CatalogSnapshot(data_dir) as snapshot:
+            index = policy.index_path(snapshot)
+            # a stale or partial file would fail every answer: pin only a compatible index
+            usable = index.exists() and policy._compatible(index, snapshot) is not None
+        data["policy_index"] = index.name
+        data["policy_index_sha256"] = _sha256(index) if usable else None
     return {
         "freeze_format": FREEZE_FORMAT,
         "git": _git_state(),
@@ -96,14 +113,10 @@ def current_state(
         "versions": {
             "python": platform.python_version(),
             "anthropic": version("anthropic"),
+            "openai": version("openai"),  # embeddings client (and the GPT adapter)
             "pydantic": version("pydantic"),
         },
-        "data": {
-            "generation": generation.id,
-            "sources_sha256": _source_hashes(generation.catalog),
-            "catalog_sha256": _sha256(generation.catalog),
-            "policies_sha256": _sha256(generation.policies),
-        },
+        "data": data,
         "criteria": criteria,
     }
 
@@ -134,8 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, help="write: new manifest path (git-ignored)")
     parser.add_argument("--manifest", type=Path, help="check: existing manifest")
     parser.add_argument("--prompt-cache", choices=["off", "system-5m"], required=True)
-    parser.add_argument("--policy-context", choices=["full", "bm25"], default="full")
-    parser.add_argument("--max-model-calls", type=int, default=4)
+    from .agent import AgentConfig
+    from .policy_context import POLICIES
+
+    parser.add_argument("--policy-context", choices=sorted(POLICIES), default="full")
+    parser.add_argument("--max-model-calls", type=int, default=AgentConfig.max_model_calls)
     parser.add_argument("--scenarios", type=Path, default=None, help="owner-held validation file")
     args = parser.parse_args(argv)
     state = current_state(
@@ -149,6 +165,9 @@ def main(argv: list[str] | None = None) -> int:
         if out is None or not private_path(out) or out.exists():
             print("FAILED: --out must be a new file outside the repository or in a private folder")
             return 1
+        if "policy_index_sha256" in state["data"] and not state["data"]["policy_index_sha256"]:
+            print("FAILED: build the embeddings index first (retrieval_eval --policy embeddings)")
+            return 1
         if state["git"].get("dirty") is not False:
             print("FAILED: commit the candidate first (working tree differs from HEAD)")
             return 1
@@ -159,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.manifest is None:
         print("FAILED: --manifest is required")
         return 1
-    diffs = divergences(json.loads(args.manifest.read_text(encoding="utf-8")), state)
+    diffs = divergences(json.loads(args.manifest.read_bytes()), state)
     print("\n".join(diffs) if diffs else "frozen configuration matches")
     return 1 if diffs else 0
 

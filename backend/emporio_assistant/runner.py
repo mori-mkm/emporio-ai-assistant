@@ -20,6 +20,7 @@ from functools import partial
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from .agent import AgentConfig
 from .budget import BudgetError
 from .fixtures import DEV_028_TEXT, AuxiliarySession, CatalogTimeout, ProductTextInjection
 from .scenarios import validate_structure, validate_validation
@@ -218,8 +219,12 @@ def run(
     run_id: str | None = None,
     max_run_s: float | None = None,
     suite: str = "development",
+    scenarios_bytes: bytes | None = None,
 ) -> Path:
-    data = json.loads(scenarios_path.read_text(encoding="utf-8"))
+    """`scenarios_bytes`: the exact content already read (and, for validation, hash-checked)
+    by the caller; the file is not read again, so another content cannot run in its place."""
+    raw = scenarios_bytes if scenarios_bytes is not None else scenarios_path.read_bytes()
+    data = json.loads(raw)
     errors = (validate_validation if suite == "validation" else validate_structure)(data)
     if errors:
         raise ValueError(f"scenario file is invalid for the {suite} suite ({len(errors)} errors)")
@@ -298,6 +303,7 @@ def run(
         "config_version": executor.config_version,
         "configuration": executor.configuration,
         "git": _git_state(),
+        "scenarios_sha256": hashlib.sha256(raw).hexdigest(),  # the content that ran
         "scenario_contract_version": data["contract_version"],
         "data_version": data["data_version"],  # scenarios were written against this data
         "data_generations": sorted(
@@ -404,9 +410,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--num-predict", type=int, default=None, help="local: output tokens")
     parser.add_argument(
         "--policy-context",
-        choices=["full", "bm25"],
+        choices=["full", "bm25", "embeddings"],
         default="full",
-        help="manual sections in the prompt: full (baseline) or BM25 top-k (EMP-12)",
+        help="manual sections in the prompt: full (baseline), BM25 top-k or embeddings top-k "
+        "(EMP-12; embeddings: live only, prebuilt index, paid queries on the same budget)",
     )
     parser.add_argument(
         "--prompt-cache",
@@ -422,7 +429,9 @@ def main(argv: list[str] | None = None) -> int:
         help="record each turn's model/tool steps (validated arguments, public tool results)",
     )
     parser.add_argument("--batch-cap-usd", type=Decimal, default=None)
-    parser.add_argument("--max-model-calls", type=int, default=4, help="per turn (1-5)")
+    parser.add_argument(
+        "--max-model-calls", type=int, default=AgentConfig.max_model_calls, help="per turn (1-5)"
+    )
     parser.add_argument(
         "--max-run-seconds",
         type=float,
@@ -436,6 +445,7 @@ def main(argv: list[str] | None = None) -> int:
             _check_validation_args(args)
         args.scenarios = args.scenarios or DEFAULT_SCENARIOS
         args.out_dir = args.out_dir or DEFAULT_OUT
+        args.scenarios_bytes = args.scenarios.read_bytes()  # read once: checked and run as is
         if args.executor == "placeholder":
             executor, run_id = simulated_executor(), None
         else:
@@ -449,6 +459,7 @@ def main(argv: list[str] | None = None) -> int:
             run_id=run_id,
             max_run_s=args.max_run_seconds,
             suite=args.suite,
+            scenarios_bytes=args.scenarios_bytes,
         )
     except (OSError, ValueError) as error:
         print(f"FAILED: {error}")
@@ -486,10 +497,8 @@ def _check_validation_args(args) -> None:
 def _service_executor(args) -> tuple[Executor, str]:
     from dataclasses import replace as with_changes
 
-    from .agent import AgentConfig
     from .assistant import Settings, build_service, make_generator
     from .generation import AdapterConfigError, ProviderError
-    from .policy_context import POLICIES
 
     if not 1 <= args.max_model_calls <= 5:
         raise ValueError("--max-model-calls must be between 1 and 5")
@@ -511,7 +520,13 @@ def _service_executor(args) -> tuple[Executor, str]:
     provider = {"live": args.provider, "local": "ollama", "simulated": "simulated"}[mode]
     if args.prompt_cache != "off" and (provider != "anthropic" or args.policy_context != "full"):
         raise ValueError("--prompt-cache needs --executor live --provider anthropic, full manual")
-    settings = with_changes(settings, mode=mode, provider=provider, prompt_cache=args.prompt_cache)
+    settings = with_changes(
+        settings,
+        mode=mode,
+        provider=provider,
+        prompt_cache=args.prompt_cache,
+        policy_context=args.policy_context,
+    )
     overrides = {
         k: v for k, v in (("num_ctx", args.num_ctx), ("num_predict", args.num_predict)) if v
     }
@@ -526,8 +541,7 @@ def _service_executor(args) -> tuple[Executor, str]:
             settings,
             generator=generator,
             config=config,
-            run_cap_micro_usd=cap_micro,
-            policy=POLICIES[args.policy_context](),
+            run_cap_micro_usd=cap_micro,  # the same make_policy(settings) the API uses
             budget="validation" if validation else "development",
         )
     except (AdapterConfigError, ProviderError) as error:
@@ -548,13 +562,15 @@ def _freeze_check(args) -> dict:
     from .freeze import current_state, divergences
     from .generations import GenerationError
 
-    manifest = json.loads(args.freeze_manifest.read_text(encoding="utf-8"))
+    manifest_bytes = args.freeze_manifest.read_bytes()  # hashed and parsed from one read
+    manifest = json.loads(manifest_bytes)
     try:
         current = current_state(
             prompt_cache=args.prompt_cache,
             policy_context=args.policy_context,
             max_model_calls=args.max_model_calls,
             scenarios=args.scenarios,
+            scenarios_bytes=args.scenarios_bytes,  # the same bytes run() executes
         )
     except (ImportError, sqlite3.Error, GenerationError) as error:
         raise ValueError(f"cannot compute the frozen configuration: {error}") from None
@@ -564,7 +580,7 @@ def _freeze_check(args) -> dict:
     if diffs:
         raise ValueError("frozen configuration differs: " + "; ".join(diffs[:10]))
     return {
-        "manifest_sha256": hashlib.sha256(args.freeze_manifest.read_bytes()).hexdigest(),
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "config_version": current["config_version"],
         "commit": current["git"].get("commit"),
         "divergences": [],

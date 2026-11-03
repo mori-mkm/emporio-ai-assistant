@@ -31,7 +31,8 @@ from .tools import CatalogSnapshot, call_tool, tool_schemas, validated_arguments
 
 @dataclass(frozen=True)
 class AgentConfig:
-    max_model_calls: int = 5  # per customer turn
+    # per customer turn; 4 is the measured profile, shared by the API, runner and freeze
+    max_model_calls: int = 4
     max_tool_calls: int = 8  # per customer turn
     turn_timeout_s: float = 90.0
     max_user_chars: int = 2_000
@@ -334,7 +335,12 @@ class Agent:
             raise TurnError("invalid_message")
         if len(history) + 2 > cfg.max_history_messages:
             raise TurnError("conversation_limit")
-        selection = self.policy.select(snapshot, history, user_text)
+        # The turn limit starts before retrieval: a paid query is inside the same time budget.
+        deadline = time.monotonic() + cfg.turn_timeout_s
+        context = replace(context, config_version=self.version, data_version=snapshot.id)
+        selection = self.policy.select(
+            snapshot, history, user_text, context=replace(context, timeout_s=cfg.turn_timeout_s)
+        )
         policy_record = selection.record({s["id"]: s for s in snapshot.policies()["sections"]})
         allowed = None if selection.mode == "full" else set(selection.section_ids)
         system = build_system(snapshot, selection)
@@ -343,9 +349,8 @@ class Agent:
             *render_history(history),
             {"role": "user", "content": neutralize(user_text)},
         ]
-        context = replace(context, config_version=self.version, data_version=snapshot.id)
-        deadline = time.monotonic() + cfg.turn_timeout_s
-        calls, used, seen, ops, metrics, lookups = 0, [], set(), [], [], []
+        calls, used, seen, metrics, lookups = 0, [], set(), [], []
+        ops = list(selection.op_ids)  # retrieval query operations come first
 
         def stop(status: str, reason: str) -> TurnResult:
             return TurnResult(

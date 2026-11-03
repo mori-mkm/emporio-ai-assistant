@@ -1,4 +1,8 @@
-"""Offline retrieval evaluation (EMP-12): BM25-selected manual sections vs manual references.
+"""Retrieval evaluation (EMP-12): selected manual sections vs manual references.
+
+BM25 is offline. `--policy embeddings` is paid (development budget, guarded calls): it
+builds or reuses the vector index, then embeds each turn's query, and reports index and
+query cost/time apart. No answer model is called in either case.
 
 Two methods, both kept apart from `policy_context` (the retriever receives only the
 conversation so far, never scenario ids, later turns, references or the rubric):
@@ -10,9 +14,10 @@ conversation so far, never scenario ids, later turns, references or the rubric):
 - `scenario-aggregate` (first method, kept to reproduce the earlier 0.38 proxy): the
   scenario's manual references applied to every turn.
 Section coverage says whether the evidence was in the context, not whether an answer would be
-correct or faithful. No model is called.
+correct or faithful.
 
     python -m emporio_assistant.retrieval_eval [--data-dir data\\derived] [--method by-turn]
+        [--policy bm25|embeddings --confirm-paid-run --batch-cap-usd 0.02]
 """
 
 from __future__ import annotations
@@ -20,11 +25,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import secrets
 import sqlite3
 import statistics
 from collections import Counter
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from .policy_context import BM25Policy
@@ -225,8 +233,9 @@ def _ratio(numerator: int, denominator: int) -> dict:
 
 
 def evaluate_by_turn(
-    scenarios_doc: dict, key: dict, snapshot: CatalogSnapshot, policy: BM25Policy
+    scenarios_doc: dict, key: dict, snapshot: CatalogSnapshot, policy, context=None
 ) -> dict:
+    """`context` (embeddings only): the paid-call context; each scenario id is set on it."""
     sections = {s["id"]: s for s in snapshot.policies()["sections"]}
     sha = hashlib.sha256(snapshot.generation.policies.read_bytes()).hexdigest()
     entries = load_references(key, scenarios_doc, set(sections), sha)
@@ -235,8 +244,10 @@ def evaluate_by_turn(
     turns = []
     for scenario in scenarios_doc["scenarios"]:
         history: list[dict] = []
+        call = None if context is None else replace(context, scenario_id=scenario["id"])
         for number, turn in enumerate(scenario["turns"], start=1):
-            selection = policy.select(snapshot, history, turn["user"])  # past and current only
+            # past and current customer messages only: no reference or expectation is sent
+            selection = policy.select(snapshot, history, turn["user"], context=call)
             history += [{"role": "user", "content": turn["user"]},
                         {"role": "assistant", "content": ""}]  # fmt: skip
             got = set(selection.section_ids)
@@ -257,6 +268,7 @@ def evaluate_by_turn(
                 "no_match": selection.details["no_match"],
                 "chars": sum(len(sections[i]["text"]) for i in selection.section_ids),
                 "query_ms": selection.details["query_ms"],
+                "op_ids": list(selection.op_ids),
                 "support_retrieved": sorted(set(support) & got),
                 "support_total": len(support),
             }
@@ -326,14 +338,89 @@ def evaluate_by_turn(
     }
 
 
+EMBEDDINGS_CAP_USD = Decimal("0.05")  # ceiling for one index build + query evaluation
+
+
+def _paid_costs(ledger, run_id: str, index_ops: list[str]) -> dict:
+    """Index build and queries reported apart, from the ledger (read-only)."""
+    ops = ledger.run_report(run_id)["operations"]
+
+    def part(items):
+        return {
+            "operations": len(items),
+            "states": dict(Counter(o["state"] for o in items)),
+            "input_tokens": sum((o["usage"] or {}).get("input", 0) for o in items),
+            "confirmed_micro_usd": sum(o["confirmed_micro_usd"] or 0 for o in items),
+            "reserved_micro_usd": sum(o["reserved_micro_usd"] for o in items),
+            "duration_ms": sum(o["duration_ms"] or 0 for o in items),
+        }
+
+    return {
+        "index": part([o for o in ops if o["op_id"] in index_ops]),
+        "queries": part([o for o in ops if o["op_id"] not in index_ops]),
+    }
+
+
+def _embeddings_report(args, data: dict, key: dict, snapshot: CatalogSnapshot) -> dict:
+    """Paid: builds or reuses the index, then embeds each turn's query (development budget,
+    budget-guarded). The query is the conversation so far; references never reach it."""
+    from .assistant import Settings
+    from .budget import Ledger
+    from .embeddings import OpenAIEmbedder
+    from .generation import CallContext
+    from .policy_context import EmbeddingPolicy
+    from .pricing import load_price_table
+
+    settings = Settings.from_env()
+    ledger = Ledger(settings.ledger_path)
+    embedder = OpenAIEmbedder(ledger, load_price_table(settings.pricing_path))
+    policy = EmbeddingPolicy(embedder)
+    version = hashlib.sha256(json.dumps(policy.describe(), sort_keys=True).encode()).hexdigest()
+    run_id = f"retrieval-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(3)}"
+    context = CallContext(
+        run_id=run_id,
+        config_version=f"retrieval-{version[:12]}",
+        data_version=snapshot.id,
+        budget="development",  # never the validation budget in this experiment
+        run_cap_micro_usd=int(args.batch_cap_usd * 1_000_000),
+        timeout_s=60.0,
+    )
+    build = policy.build_index(snapshot, replace(context, scenario_id="policy-index"))
+    report = evaluate_by_turn(data, key, snapshot, policy, context=context)
+    report.update(
+        kind="retrieval evaluation with paid embedding calls (no answer model)",
+        execution="paid_api",
+        run_id=run_id,
+        index_build=build,
+        query_cache={"hits": policy.cache_hits, "misses": policy.cache_misses},
+        costs=_paid_costs(ledger, run_id, build["op_ids"]),
+    )
+    return report
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Offline BM25 retrieval evaluation.")
+    parser = argparse.ArgumentParser(description="Retrieval evaluation (BM25 offline; "
+                                     "embeddings with paid, budget-guarded calls).")  # fmt: skip
     parser.add_argument("--scenarios", type=Path, default=DEFAULT_SCENARIOS)
     parser.add_argument("--references", type=Path, default=DEFAULT_REFERENCES)
     parser.add_argument("--method", choices=["by-turn", "scenario-aggregate"], default="by-turn")
+    parser.add_argument("--policy", choices=["bm25", "embeddings"], default="bm25",
+                        help="embeddings: paid (needs --confirm-paid-run, --batch-cap-usd, "
+                        "by-turn, OPENAI_API_KEY in the process)")  # fmt: skip
+    parser.add_argument("--confirm-paid-run", action="store_true")
+    parser.add_argument("--batch-cap-usd", type=Decimal, default=None)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUT)
     args = parser.parse_args(argv)
+    paid = args.policy == "embeddings"
+    if paid:
+        cap = args.batch_cap_usd
+        if not args.confirm_paid_run or args.method != "by-turn":
+            print("FAILED: embeddings make paid calls: add --confirm-paid-run (by-turn only)")
+            return 1
+        if cap is None or not Decimal(0) < cap <= EMBEDDINGS_CAP_USD:
+            print(f"FAILED: --batch-cap-usd is required, > 0 and <= {EMBEDDINGS_CAP_USD}")
+            return 1
     try:
         data = json.loads(args.scenarios.read_text(encoding="utf-8"))
         key = (json.loads(args.references.read_text(encoding="utf-8"))
@@ -344,20 +431,33 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     try:
         with snapshot:
-            if key is None:
+            if paid:
+                load_references(key, data, None, None)  # refuse a bad key before paying
+                report = _embeddings_report(args, data, key, snapshot)
+            elif key is None:
                 report = evaluate(data["scenarios"], snapshot, BM25Policy())
             else:
                 report = evaluate_by_turn(data, key, snapshot, BM25Policy())
     except ReferenceKeyError as error:
         print(f"FAILED: invalid by-turn references: {error}")
         return 1
+    except Exception as error:  # paid path: budget, provider, index or configuration
+        if not paid:
+            raise
+        print(f"FAILED: {type(error).__name__}: {error} (see budget run/summary)")
+        return 1
     args.out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     label = f"{report['references_version']}-{EVAL_VERSION}-" if key is not None else ""
-    path = args.out_dir / f"retrieval-bm25-{label}{stamp}.json"
+    path = args.out_dir / f"retrieval-{args.policy}-{label}{stamp}.json"
     path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
-    print(f"OFFLINE retrieval evaluation written to {path} (no model called)")
+    if paid:
+        print(json.dumps({"costs": report["costs"], "query_cache": report["query_cache"]},
+                         indent=2))  # fmt: skip
+        print(f"PAID retrieval evaluation written to {path} (embedding calls, no answer model)")
+    else:
+        print(f"OFFLINE retrieval evaluation written to {path} (no model called)")
     return 0
 
 

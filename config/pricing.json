@@ -1,5 +1,5 @@
 {
-  "pricing_version": "2026-11-01.2",
+  "pricing_version": "2026-11-02.1",
   "fictitious": false,
   "notice": "First-party APIs, standard service tier, global processing (no data residency), prompts below each entry's max_prompt_tokens tier only. Any other condition reported in usage (long prompt, regional/priority/fast/flex tier, server or hosted tools, 12-hour cache writes) has no price here and puts the ledger on hold.",
   "models": [
@@ -71,6 +71,21 @@
         },
         "output": {
           "usd_per_million": "0.50"
+        }
+      }
+    },
+    {
+      "provider": "openai",
+      "model": "text-embedding-3-small",
+      "unit": "usd_per_million_tokens",
+      "source": "https://developers.openai.com/api/docs/models/text-embedding-3-small (Pricing: $0.02 / 1M tokens) and https://developers.openai.com/api/docs/guides/embeddings (1536 dimensions, input tokens only, usage prompt_tokens/total_tokens)",
+      "checked_on": "2026-11-02",
+      "required_usage": [
+        "input"
+      ],
+      "categories": {
+        "input": {
+          "usd_per_million": "0.02"
         }
       }
     }

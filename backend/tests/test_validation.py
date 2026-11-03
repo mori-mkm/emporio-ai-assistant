@@ -143,6 +143,56 @@ def test_divergences_list_changed_paths_and_ignore_the_write_time():
     assert freeze.divergences({**current, "written_at": "t"}, current) == []
 
 
+def changed_suite() -> dict:
+    data = suite()
+    data["scenarios"][0]["turns"][0]["user"] = "CONTEUDO TROCADO DEPOIS DA CONFERENCIA"
+    return data
+
+
+def test_file_changed_after_the_manifest_is_refused_before_any_client(paths, monkeypatch, capsys):
+    no_client(monkeypatch)
+    write_args = [
+        "write", "--out", str(paths["manifest"]), "--prompt-cache", "system-5m",
+        "--scenarios", str(paths["scenarios"]),
+    ]  # fmt: skip
+    assert freeze.main(write_args) == 0
+    write(paths["scenarios"], changed_suite())
+    assert runner.main(args(paths)) == 1
+    assert "criteria.validation_file_sha256" in capsys.readouterr().out
+    assert list(paths["out"].iterdir()) == []
+
+
+def test_file_swapped_between_check_and_run_does_not_run_the_new_content(paths, monkeypatch):
+    """The check and the run use one read: a swap after the check changes nothing that runs."""
+    import hashlib
+
+    fake = FakeAnthropic(*[text("[resposta sintética]") for _ in range(10)])
+    monkeypatch.setattr(anthropic_adapter, "_new_client", lambda _timeout: fake)
+    write_args = [
+        "write", "--out", str(paths["manifest"]), "--prompt-cache", "system-5m",
+        "--scenarios", str(paths["scenarios"]),
+    ]  # fmt: skip
+    assert freeze.main(write_args) == 0
+    checked = paths["scenarios"].read_bytes()
+    original_state = freeze.current_state
+
+    def check_then_swap(**kwargs):
+        state = original_state(**kwargs)
+        write(paths["scenarios"], changed_suite())  # the file changes right after the check
+        return state
+
+    monkeypatch.setattr(freeze, "current_state", check_then_swap)
+    assert runner.main(args(paths)) == 0
+    assert paths["scenarios"].read_bytes() != checked  # the swap really happened
+    (report_path,) = paths["out"].glob("*-validation.json")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    frozen = json.loads(paths["manifest"].read_text(encoding="utf-8"))
+    assert report["scenarios_sha256"] == hashlib.sha256(checked).hexdigest()
+    assert report["scenarios_sha256"] == frozen["criteria"]["validation_file_sha256"]
+    assert all("TROCADO" not in json.dumps(r) for r in fake.requests)
+    assert "PLACEHOLDER SINTÉTICO 1" in json.dumps(fake.requests[0], ensure_ascii=False)
+
+
 def test_frozen_run_uses_the_validation_budget_and_private_output(paths, monkeypatch):
     fake = FakeAnthropic(*[text("[resposta sintética]") for _ in range(10)])
     monkeypatch.setattr(anthropic_adapter, "_new_client", lambda _timeout: fake)

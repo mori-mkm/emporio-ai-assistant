@@ -33,8 +33,10 @@ def test_record_comes_from_real_tool_events_with_trace_off(generation_dir, live_
         text("Sim."),
     )
     session = svc.start_session(run_id="test-run")
-    svc.send(session.id, "Quanto custa o 1001?", "r1")  # no diagnostics, no trace
-    svc.send(session.id, "Você já consultou, né?", "r2")
+    first = svc.send(session.id, "Quanto custa o 1001?", "r1")  # no diagnostics, no trace
+    second = svc.send(session.id, "Você já consultou, né?", "r2")
+    assert "lookup_record" not in str(first) + str(second)  # internal only, never public
+    assert first["reply"]["text"] == "Custa R$ 1.049,33."
     earlier = history_of(client.requests[2])[1]
     assert earlier.startswith(
         f'<lookup_record source="server" turn="1" data_generation="{session.generation_id}">'
