@@ -74,6 +74,8 @@ Evidence labels used below: **computed** = value returned by `getComputedStyle` 
 - Horizontal overflow: `scrollWidth` exceeded the viewport by 1 px at 768, 390 and 360 px (computed `scrollWidth` 769/391/361).
 
 ## What the assistant adapts (and what it does not)
+Current state after EMP-21 (one-column simplification); rows changed by EMP-21 say so. The reference observations above are unchanged.
+
 | Reference element | Adaptation in the demo | Evidence/decision |
 |---|---|---|
 | Black/white/red palette | Same red `#E7222E` for bands and accents; `#0A0A0A` text on `#FEFEFE`; black and `#242424` sections | computed values reused |
@@ -81,17 +83,17 @@ Evidence labels used below: **computed** = value returned by `getComputedStyle` 
 | Field border `#CACACA` (1.64:1) | `#909090` (3.19:1, meets the 3:1 non-text contrast) | ours (accessibility) |
 | No visible focus ring | 3 px `#1A5FB4` outline everywhere (lighter blue on black areas) | ours (accessibility) |
 | Bebas Neue display, Kanit buttons, Roboto Condensed | Same families for headings, labels and buttons; **body and chat text in Roboto Condensed**, not Bebas (Bebas has no lowercase, too hard to read in long answers) | computed families; body choice ours |
-| Red top bar | Black strip with a 4 px red rule and the label "Demo conceitual de atendimento com IA · não é um canal de vendas" | ours (demo disclosure) |
+| Red top bar | Black strip with a 4 px red rule: "Empório da Música · Campo Grande/MS" and one small "Demonstração" tag (EMP-21; EMP-20 had a longer demo sentence) | ours (demo disclosure) |
 | Logo with red "SHOP" tag | Text wordmark "EMPÓRIO" with a red notched tag "DA MÚSICA" (CSS, no image) | adapted device, our own words |
-| Header search "Encontre seu instrumento" | "Encontre um instrumento ou pergunte": submits the question to the same chat session | adapted |
-| Navigation row of categories | Buttons for the six catalog categories that have products; each asks the assistant about that category | ours (only catalog-backed categories) |
-| Red benefits band | Red band stating what the assistant helps with (catalog prices, payment rules from the manual, exchanges/delivery/warranty with the cited section): no commercial promise | ours (no Pride benefits) |
-| Section titles with red rules | Side-column titles with a red rule | adapted |
+| Header search "Encontre seu instrumento" | **Removed in EMP-21** (EMP-20 had a header question box duplicating the message box). The intro "Encontre seu próximo instrumento." lives once, in the empty chat | ours |
+| Navigation row of categories | Buttons for the six catalog categories that have products, beside the logo on desktop; each asks the assistant about that category in the current session | ours (only catalog-backed categories) |
+| Red benefits band | Red band with three informative titles, not controls: "Instrumentos e preços", "Pagamento e parcelamento", "Trocas, entregas e garantia"; no commercial promise | ours (no Pride benefits) |
+| Section titles with red rules | Not used since EMP-21 (the side column with suggested questions and demo notes was removed) | — |
 | White cards, 12 px radius on dark sections | Chat panel: white card with 12 px radius, black header bar, dialog shadow | adapted |
 | Product cards | **Not adapted.** The public API returns only reply text and cited sections, no structured products; cards would require a contract change (recorded as later work) | ours |
-| Footer `#242424` + black copyright bar | Same two-level footer with a short demo disclaimer; no links | adapted |
-| Breakpoints 40em / 64em | Same breakpoints: one column below 64em, mobile header below 40em | computed breakpoints reused |
-| Container 1520 px / 32 px padding | 80rem (1280 px) max-width, 32 px padding (12 px on mobile, close to the observed 10 px) | ours (chat readability) |
+| Footer `#242424` + black copyright bar | One small `#242424` line: "Empório da Música · Instrumentos musicais"; no links (EMP-21) | adapted |
+| Breakpoints 40em / 64em | Same breakpoints: shortcuts on their own row below 64em, mobile header below 40em; plus a short-window rule (`max-height: 40rem`) | computed breakpoints reused; height rule ours |
+| Container 1520 px / 32 px padding | 64rem (1024 px) one-column max-width since EMP-21 (80rem with a side column in EMP-20), messages capped at 44rem; 32 px padding (12 px on mobile, close to the observed 10 px) | ours (chat readability) |
 
 ## Limitations
 - Only the home page was inspected. Category, product, cart, login and blog pages were not opened.

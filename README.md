@@ -11,6 +11,20 @@ Answer repetitive customer questions (products, prices, stock, promotions, payme
 - **Implemented and working end to end:** chat UI (React + TypeScript + Vite) -> FastAPI -> one agent -> read-only tools over a local SQLite snapshot of the challenge catalog, with the full store manual in the prompt.
 - **Final configuration (frozen at commit `0dc5253`, config `d9f674fcc08d`):** Anthropic Claude Haiku 5.5, the full store manual in the prompt, 5-minute prompt cache, at most 4 model calls per turn.
 - **Measured:** real model runs on the 30 **development** scenarios, reviewed by hand (results below): the final configuration passed 27/30 and 28/30 with 0 critical failures in its two runs. Embeddings and BM25 retrieval were measured as alternatives and not selected. On the **reserved validation** (10 cases, run once after the freeze): 9/10, 0 critical failures. This is supporting evidence from small suites, not statistical proof or a production SLA.
+- **Evaluated code vs later commits:** the evaluated agent, prompt, tools, limits and configuration are those of commit `0dc5253`. Later commits change only documentation and the browser interface (EMP-20 store-style layout, EMP-21 one-column simplification); `backend/`, `config/`, `evals/` and `scripts/` are unchanged since `0dc5253`. The validation manifest keeps pointing at `0dc5253`.
+
+## Interface
+
+![Final chat page in live mode: the customer asks for the store address and opening hours; each answer lists its manual source](examples/screenshots/02-store-information.png)
+
+*The final one-column page (EMP-21) during a real (live) conversation, from the manual session in [examples/conversations.md](examples/conversations.md).*
+
+- **Identity:** Empório da Música, the fictional store of the case (Campo Grande/MS, as in its manual). One small "Demonstração" tag marks the page as a demo.
+- **Layout (one column):** a compact header with the logo and six instrument shortcuts (only categories that have products), an informative red band (instruments and prices; payment and installments; exchanges, delivery and warranty; titles, not buttons), the chat panel and a one-line footer. There is no header search and no FAQ: the message box is the single way to ask, and the shortcuts send a question about that category through the same chat.
+- **Chat panel:** answers are plain text with the cited manual sections listed as sources (no product cards: the API does not return structured products). "Nova conversa" starts a new session. Only the history scrolls, so the message box and the send button are never cut off, including at 200% zoom and on 360 px screens. On a network failure the typed text is kept and can be resent.
+- **Conversation limit:** when the server reports the limit (or a lost or expired session), the message box is replaced by "Esta conversa chegou ao limite." and one "Iniciar nova conversa" button; the history stays readable, the typed text is kept for the new conversation, and nothing restarts on its own.
+- **Simulated mode:** the backend reports its mode when a session starts; only in simulated mode the page shows the compact notice "Modo simulado · respostas de teste, sem chamada à IA." (expandable for details) and a "Resposta simulada" badge on each reply. In live mode neither appears, and the page never shows the model, configuration or budget.
+- **Visual reference:** the look (black, white and red, condensed display type, red information band, rounded panels) was adapted from an audit of the public home page of Pride Music Shop, a real instrument store, chosen only as a visual reference for a music retailer. No name, logo, image, price, contact, policy or benefit of that store is used; all store facts come from the case's catalog and manual. Observed values, accessibility adjustments and our own decisions are recorded in [docs/PRIDE_DESIGN_AUDIT.md](docs/PRIDE_DESIGN_AUDIT.md). Fonts come from Google Fonts; without network the page falls back to system fonts.
 
 ## Architecture
 
@@ -27,29 +41,55 @@ Browser (frontend/src) --text + request id--> FastAPI (main.py) --> AssistantSer
 - **Ephemeral memory.** History lives in the API process, per session, with limits and a 30-minute idle expiry. Each earlier assistant reply carries a server-written record of the tool calls that really ran in that turn (tool, validated arguments, ok/failed, data generation; no prices or stock).
 - **Budget ledger.** Every paid call goes through one guarded path that reserves a worst-case cost, settles only complete provider usage and keeps the reservation when the outcome is unknown.
 
-## Prerequisites
+## Installation and running
 
-- Windows with PowerShell 5.1
-- Python 3.11 (`py -3.11`)
+Tested only on **Windows 11 with Windows PowerShell 5.1**. Other operating systems are not tested and not claimed. On 2026-11-03 (EMP-15) these steps were checked in a fresh copy of the repository files with a new virtual environment; a clean `git clone` of the published final version is checked separately (see `docs/progress.md`).
+
+Prerequisites:
+
+- Python 3.11 available as `py -3.11`
 - Node.js 24 and npm (developed with Node 24.18.0, npm 11.16.0)
+- Git
+- The case package provided to candidates (CSV tables and the store manual PDF), extracted locally. It is not redistributed in this repository.
+- Only for live mode: an Anthropic API key.
 
-No Docker or global packages. API keys are needed only for live mode.
+No Docker or global packages. Every block below says where to run it; `<repo>` is the folder created by the clone.
 
-## Setup (once, from the repository root)
+### 1. Clone the repository
+
+Any folder you choose:
+
+```powershell
+git clone https://github.com/mori-mkm/emporio-ai-assistant.git
+Set-Location emporio-ai-assistant
+```
+
+### 2. Create the Python environment
+
+From `<repo>`:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -c backend\constraints.txt -e ".\backend[dev]"
+```
+
+`backend/pyproject.toml` declares the direct dependencies and `backend/constraints.txt` pins the tested set.
+
+### 3. Install the frontend
+
+From `<repo>`:
+
+```powershell
 Set-Location frontend
 npm ci
 Set-Location ..
 ```
 
-`backend/pyproject.toml` declares the direct dependencies and `backend/constraints.txt` pins the tested set; `frontend/package-lock.json` pins the frontend. These exact commands were checked on 2026-11-03 in a fresh copy of the repository files with a new virtual environment (offline checks, data preparation and scenario checks passed); a fresh `git clone` on another machine has not been tested.
+`frontend/package-lock.json` pins the frontend.
 
-## Prepare the local data
+### 4. Prepare the data from the case sources
 
-The challenge files (CSV tables and the store manual PDF) are not redistributed in this repository: they come with the case package provided to candidates. Extract that package locally and point the command at its folder (quotes matter: the folder name has spaces and accents):
+From `<repo>`. Point `$src` at the extracted case package (quotes matter: the folder name has spaces and accents):
 
 ```powershell
 $src = 'C:\path\to\Desafio Técnico AI Engineer 2026'
@@ -61,61 +101,83 @@ $src = 'C:\path\to\Desafio Técnico AI Engineer 2026'
 
 It validates the CSVs and the manual, publishes a new generation (`catalog.sqlite`, `policies.json`, `quality_report.json`) under `data\derived\generations\` and makes it active (all git-ignored). Customers and orders are not loaded. Exit code 1 means nothing changed. Data rules and source ambiguities: [docs/data.md](docs/data.md).
 
-## Modes
+### 5. Open in simulated mode (no AI call, no cost)
 
-The backend reads **process environment variables** only (`.env.example` lists them; no `.env` loader).
+The backend reads **process environment variables** only. `.env.example` is a reference list and is **not loaded** automatically; set variables in the PowerShell window that starts the API.
 
-| `EMPORIO_ASSISTANT_MODE` | Behaviour |
-|---|---|
-| unset (default) | Chat disabled (503 `assistant_not_configured`); health works. Never a mock or a paid call by default. |
-| `simulated` | Offline: real API, sessions, agent loop and tools; the model is replaced by a scripted reply that says it is simulated. Not evidence of model quality. |
-| `live` | Paid API. `EMPORIO_PROVIDER=anthropic` (default, Claude Haiku 5.5) or `openai` (GPT-6 Luna). Needs the key, verified prices and an existing live ledger. `EMPORIO_PROMPT_CACHE=system-5m` enables the Anthropic cache. `EMPORIO_POLICY_CONTEXT` = `full` (default), `bm25` or `embeddings` (experimental: also the OpenAI key and a prebuilt index). The final configuration is `live` + `anthropic` + `system-5m` with the default full manual, the same configuration (hash `d9f674fcc08d`) the runner measured and froze. |
-| `local` | Ollama `qwen3:8b` on a loopback address, no ledger. Suspended for evaluation (failed a critical scenario). |
-
-Set a key without echoing it; it lasts only for that PowerShell window and never reaches the browser, logs or reports:
+Terminal 1, API, from `<repo>`. Run **one worker**: sessions live in memory. Clear variables left by a previous live session first: simulated mode refuses `EMPORIO_PROVIDER=anthropic` and the chat then stays disabled.
 
 ```powershell
-$secure = Read-Host 'ANTHROPIC_API_KEY' -AsSecureString
-$env:ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
-Remove-Variable secure
-# ... start the API ...
-Remove-Item Env:ANTHROPIC_API_KEY
-```
-
-The live ledger is created once by the owner: `.\.venv\Scripts\python.exe -m emporio_assistant.budget init --mode live` (refuses to overwrite). `budget summary` and `budget run <run_id>` are read-only.
-
-## Run (two terminals)
-
-Terminal 1, API (simulated shown; run **one worker**, sessions are in memory). Clear live-only variables first: simulated mode refuses `EMPORIO_PROVIDER=anthropic` and the chat stays disabled.
-
-```powershell
-Set-Location backend
 Remove-Item Env:EMPORIO_PROVIDER, Env:EMPORIO_PROMPT_CACHE, Env:EMPORIO_POLICY_CONTEXT -ErrorAction SilentlyContinue
 $env:EMPORIO_ASSISTANT_MODE = 'simulated'
-..\.venv\Scripts\python.exe -m uvicorn emporio_assistant.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn emporio_assistant.main:app --app-dir backend --host 127.0.0.1 --port 8000
 ```
 
-Terminal 2, web UI:
+Terminal 2, web UI, from `<repo>`:
 
 ```powershell
 Set-Location frontend
 npm run dev
 ```
 
-Open http://127.0.0.1:5173. Vite forwards `/api/*` to the API, so the browser talks to one origin. In simulated mode a banner and a "Resposta simulada" badge mark every reply.
+Open http://127.0.0.1:5173. Vite forwards `/api/*` to the API, so the browser talks to one origin. Simulated replies run the real API, sessions, agent loop and tools, but the model is replaced by a scripted reply; the page marks them as test replies. Not evidence of model quality.
 
-The page is laid out like an instrument store (black/white/red, display type; visual reference audited in [docs/PRIDE_DESIGN_AUDIT.md](docs/PRIDE_DESIGN_AUDIT.md)) and is labelled "Demo conceitual de atendimento com IA". The header question box, the category buttons and the suggested questions send through the same chat and continue the current conversation; "Nova conversa" starts a new one. Answers are plain text with the cited manual sections (no product cards: the API does not return structured products). Fonts come from Google Fonts; without network the page falls back to system fonts. The redesign changes only the interface: the agent, prompt, tools and the validated configuration are unchanged.
+### 6. Configure live mode with Anthropic (paid)
 
-## Offline checks
+Use a **separate PowerShell window** for the API, not the terminal where Claude Code runs: Claude Code can pick up `ANTHROPIC_API_KEY` from its environment and bill the API instead of using the Pro plan login, so the key must exist only in the API's window.
 
-No network or model calls:
+Once per fresh installation, from `<repo>`, create the live budget ledger:
+
+```powershell
+.\.venv\Scripts\python.exe -m emporio_assistant.budget init --mode live
+```
+
+The command refuses to overwrite an existing ledger. **Never delete or re-create the ledger** (`data\budget\ledger.sqlite`) to clear a balance, a hold or an error: it is the record of real spending. Inspect it with the read-only `budget summary` and `budget run <run_id>`; `settle` and `clear-hold` are owner actions after checking the provider console.
+
+Terminal 1, API, from `<repo>`. The key is read without echo and removed when you stop the server:
+
+```powershell
+$secure = Read-Host 'ANTHROPIC_API_KEY' -AsSecureString
+$env:ANTHROPIC_API_KEY = [System.Net.NetworkCredential]::new('', $secure).Password
+Remove-Variable secure
+Remove-Item Env:EMPORIO_POLICY_CONTEXT -ErrorAction SilentlyContinue
+$env:EMPORIO_ASSISTANT_MODE = 'live'
+$env:EMPORIO_PROVIDER = 'anthropic'
+$env:EMPORIO_PROMPT_CACHE = 'system-5m'
+.\.venv\Scripts\python.exe -m uvicorn emporio_assistant.main:app --app-dir backend --host 127.0.0.1 --port 8000
+# after stopping the server with Ctrl+C:
+Remove-Item Env:ANTHROPIC_API_KEY
+```
+
+Terminal 2 is the same as in step 5. This is the final configuration (`live` + `anthropic` + `system-5m` + the default full manual, hash `d9f674fcc08d`). The key never reaches the browser, logs or reports. Prices come from the versioned `config/pricing.json`; every call goes through the ledger and is refused when the budget does not cover its worst case.
+
+All modes (`.env.example` lists every variable):
+
+| `EMPORIO_ASSISTANT_MODE` | Behaviour |
+|---|---|
+| unset (default) | Chat disabled (503 `assistant_not_configured`); health works. Never a mock or a paid call by default. |
+| `simulated` | Offline scripted provider over the real API, sessions, agent loop and tools. |
+| `live` | Paid API. `EMPORIO_PROVIDER=anthropic` (default, Claude Haiku 5.5) or `openai` (GPT-6 Luna). Needs the key, verified prices and an existing live ledger. `EMPORIO_PROMPT_CACHE=system-5m` enables the Anthropic cache. `EMPORIO_POLICY_CONTEXT` = `full` (default), `bm25` or `embeddings` (experimental: also the OpenAI key and a prebuilt index). |
+| `local` | Ollama `qwen3:8b` on a loopback address, no ledger. Suspended for evaluation (failed a critical scenario). |
+
+### 7. Run the offline checks
+
+From `<repo>`. No network or model calls:
 
 ```powershell
 $env:PYTHONDONTWRITEBYTECODE = '1'
 .\.venv\Scripts\python.exe scripts\verify.py --mode app
 ```
 
-Runs the harness tests, `ruff check`, `pytest` (fake provider clients) and the frontend lint, typecheck and build. Browser flow checks run locally with headless Edge against the simulated backend (scripts kept outside the repository, see `docs/progress.md`).
+Runs the harness tests, `ruff check`, `pytest` and the frontend lint, typecheck and build. The pytest suite uses synthetic fixtures and fake provider clients, so it passes without the case data; step 4 is what checks the real sources. With the data prepared, the development scenarios can also be checked against it:
+
+```powershell
+.\.venv\Scripts\python.exe -m emporio_assistant.scenarios --scenarios evals\development_scenarios.json --data-dir data\derived
+```
+
+Browser flow checks were run locally with headless Edge against the simulated backend (scripts kept outside the repository, see `docs/progress.md`).
+
+Docker is a possible future improvement; it is not implemented.
 
 ## Evaluation runs
 
@@ -123,7 +185,17 @@ Runs the harness tests, `ruff check`, `pytest` (fake provider clients) and the f
 
 ## Example conversations
 
-[examples/conversations.md](examples/conversations.md): five conversations from a real development run of the final configuration (`939445`, same config hash), exported unchanged in Portuguese as executed: a catalog search with a recommendation, price + stock + installments across turns, a return under the policy's conditions, installments where the manual's two rules disagree, and purchase/reservation/refund requests the assistant cannot perform.
+Full transcripts (Portuguese, as they happened): [examples/conversations.md](examples/conversations.md). It holds five conversations from two sources:
+
+- **Manual browser session:** one real (live) conversation in the final interface, eight customer turns in a single session, transcript provided by the owner. Date, commit and configuration were not recorded for it, so none are claimed. The four screenshots below are parts of this same session, grouped by topic; they are not four separate sessions and not benchmark runs.
+- **Development run `939445`** (final configuration, config `d9f674fcc08d`): four conversations exported unchanged by the runner: price + stock + installments across turns, a return under the policy's conditions, installments where the manual's two rules disagree, and purchase/reservation/refund requests the assistant cannot perform.
+
+| Topic (manual session) | Screenshot |
+|---|---|
+| Catalog and recommendations | [01-catalog.png](examples/screenshots/01-catalog.png) |
+| Store address and opening hours | [02-store-information.png](examples/screenshots/02-store-information.png) |
+| Product price and installments | [03-price-installments.png](examples/screenshots/03-price-installments.png) |
+| Returns policy | [04-returns.png](examples/screenshots/04-returns.png) |
 
 ## Development results (30 development scenarios)
 

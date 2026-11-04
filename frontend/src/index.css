@@ -19,9 +19,10 @@
   --font-button: 'Kanit', system-ui, sans-serif; /* observed on buttons */
   --font-body: 'Roboto Condensed', 'Arial Narrow', system-ui, sans-serif; /* observed on footer links */
 
-  --container: 80rem; /* ours (observed max 1520px reads too wide for a chat) */
+  --container: 64rem; /* ours: one-column chat (observed max 1520px reads too wide) */
+  --chat-offset: 12rem; /* ours: top strip + header + band + spacing above the chat panel */
   --gutter: 2rem; /* observed: 0 32px container padding */
-  --radius-field: 6px; /* observed: search input */
+  --radius-field: 6px; /* observed: search input (reused for fields) */
   --radius-card: 12px; /* observed: product card */
   --radius-button: 4px; /* observed: newsletter button */
   --shadow-inset: inset 0 1px 2px rgb(10 10 10 / 0.1); /* observed: search input */
@@ -92,22 +93,38 @@ textarea {
   top: 0.5rem;
 }
 
-.demo-strip {
+.top-strip {
   background: var(--black);
   color: var(--white);
   font-size: 0.875rem;
-  line-height: 2.25rem; /* observed top bar height: 36px */
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-.demo-strip::before {
+.top-strip::before {
   content: '';
   display: block;
   height: 4px;
   background: var(--red);
+}
+
+.top-strip-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 2rem;
+  letter-spacing: 0.02em;
+}
+
+.demo-tag {
+  flex: none;
+  padding: 0 0.5rem;
+  border: 1px solid #8a8a8a;
+  border-radius: var(--radius-button);
+  color: #cfcfcf;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .masthead {
@@ -118,12 +135,13 @@ textarea {
 .masthead-row {
   display: flex;
   align-items: center;
-  gap: 2.5rem;
-  padding-top: 1.25rem;
-  padding-bottom: 1.25rem;
+  gap: 2rem;
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
 }
 
 .logo {
+  flex: none;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -134,78 +152,39 @@ textarea {
 }
 
 .logo-word {
-  font-size: 2.75rem;
+  font-size: 2.5rem;
   letter-spacing: 0.01em;
 }
 
 /* Red tag with a notched end: the reference's "tag" device, with our own words. */
 .logo-tag {
-  margin-top: 0.25rem;
+  margin-top: 0.2rem;
   padding: 0.2rem 1.1rem 0.15rem 0.5rem;
   background: var(--red);
   color: var(--white);
-  font-size: 1.375rem;
+  font-size: 1.25rem;
   letter-spacing: 0.04em;
   border-radius: 6px 0 0 6px;
   clip-path: polygon(0 0, calc(100% - 0.6rem) 0, 100% 50%, calc(100% - 0.6rem) 100%, 0 100%);
 }
 
-.ask {
-  flex: 1;
-  max-width: 44rem;
-  display: flex;
-  align-items: stretch;
-}
-
-.ask input {
-  flex: 1;
-  min-width: 0;
-  height: 3rem;
-  padding: 0 1rem;
-  border: 1px solid var(--field-line);
-  border-right: 0;
-  border-radius: var(--radius-field) 0 0 var(--radius-field);
-  background: var(--paper);
-  box-shadow: var(--shadow-inset);
-  font-size: 1.0625rem;
-}
-
-.ask input::placeholder {
-  color: var(--grey-text);
-}
-
-.ask-button {
-  display: grid;
-  place-items: center;
-  width: 3.25rem;
-  height: 3rem;
-  border: 1px solid var(--red-strong);
-  border-radius: 0 var(--radius-field) var(--radius-field) 0;
-  background: var(--red-strong);
-  color: var(--white);
-  cursor: pointer;
-}
-
-.ask-button svg {
-  width: 1.5rem;
-  height: 1.5rem;
-}
-
-/* ---------- category shortcuts (the reference's main menu row) ---------- */
+/* ---------- instrument shortcuts (the reference's main menu row) ---------- */
 .categories {
-  border-top: 1px solid var(--grey-line);
+  min-width: 0;
+  flex: 1;
 }
 
 .categories ul {
   display: flex;
-  gap: 0.25rem;
+  justify-content: flex-end;
+  gap: 0.125rem;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
 .category {
   min-height: 2.75rem;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
   border: 0;
   border-bottom: 3px solid transparent;
   background: none;
@@ -226,70 +205,64 @@ textarea {
   border-bottom-color: var(--red);
 }
 
-/* ---------- red band: what the assistant helps with ---------- */
+/* ---------- red band: informative titles, not controls ---------- */
 .topics {
   background: var(--red);
   color: var(--white);
 }
 
 .topics ul {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1rem;
-  padding-top: 0.75rem;
-  padding-bottom: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.5rem 1.5rem;
+  padding-top: 0.625rem;
+  padding-bottom: 0.625rem;
 }
 
 .topics li {
   display: flex;
   align-items: center;
-  gap: 0.625rem;
-  font-size: 0.9375rem;
-  line-height: 1.3;
-}
-
-.topics strong {
+  gap: 0.5rem;
   font-family: var(--font-display);
   font-size: 1.25rem;
-  font-weight: 400;
   letter-spacing: 0.03em;
+  line-height: 1.2;
   text-transform: uppercase;
 }
 
 .topics svg {
   flex: none;
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
-/* ---------- main layout ---------- */
+/* ---------- chat panel ----------
+   Only the history scrolls. The panel follows the viewport height but never gets shorter than
+   its header + controls + a minimal history (min-height: min-content), so the composer or the
+   restart area can never be pushed out of the panel; nothing is clipped (no overflow: hidden). */
 .layout {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
-  gap: 2rem;
-  align-items: start;
-  padding-top: 1.5rem;
-  padding-bottom: 3rem;
+  padding-top: 1rem;
+  padding-bottom: 1.5rem;
 }
 
 .chat {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  height: max(30rem, calc(100dvh - 18.5rem)); /* composer visible at 1440x900 */
-  max-height: 52rem;
-  padding: 0 0 1rem;
+  height: calc(100dvh - var(--chat-offset));
+  min-height: min-content;
+  max-height: 56rem;
   background: var(--white);
   border: 1px solid var(--grey-line);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
-  overflow: hidden;
 }
 
-.chat > :not(.chat-head) {
-  margin-left: 1rem;
-  margin-right: 1rem;
+.chat-head,
+.simulated-note,
+.controls {
+  flex: none;
 }
 
 .chat-head {
@@ -297,7 +270,9 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding: 0.875rem 1rem;
+  min-height: 3.75rem;
+  padding: 0.5rem 1rem;
+  border-radius: calc(var(--radius-card) - 1px) calc(var(--radius-card) - 1px) 0 0;
   background: var(--black);
   color: var(--white);
 }
@@ -311,34 +286,42 @@ textarea {
   text-transform: uppercase;
 }
 
-.chat-head p {
-  color: #cfcfcf;
-  font-size: 0.875rem;
-}
-
-.simulated-banner {
-  padding: 0.5rem 0.75rem;
+.simulated-note {
+  margin: 0.75rem 1rem 0;
+  padding: 0.375rem 0.75rem;
   border: 1px dashed var(--ink);
   border-radius: var(--radius-field);
   background: var(--notice);
   font-size: 0.9375rem;
 }
 
+.simulated-note summary {
+  min-height: 1.75rem;
+  padding: 0.125rem 0;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.simulated-note p {
+  margin-top: 0.25rem;
+}
+
 .log {
-  flex: 1;
-  min-height: 12rem;
+  flex: 1 1 0;
+  min-height: 6rem;
   display: flex;
   flex-direction: column;
   gap: 0.875rem;
-  padding: 0.25rem 0.25rem 0.5rem;
+  margin: 0.75rem 0.25rem 0 0;
+  padding: 0.25rem 0.75rem 0.5rem 1rem;
   overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .empty {
-  margin: auto 0;
-  padding: 1.5rem;
-  border: 1px dashed var(--field-line);
-  border-radius: var(--radius-card);
+  margin: auto;
+  max-width: 34rem;
+  padding: 1.5rem 1rem;
   text-align: center;
   color: var(--grey-text);
 }
@@ -347,9 +330,15 @@ textarea {
   margin-bottom: 0.25rem;
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: 2rem;
+  font-size: 2.25rem;
+  line-height: 1.05;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+
+.empty-hint {
+  margin-top: 0.75rem;
+  font-size: 0.9375rem;
 }
 
 .message {
@@ -446,20 +435,33 @@ textarea {
   }
 }
 
-.problem {
+/* ---------- controls: alert + composer, or the restart area ---------- */
+.controls {
+  display: grid;
+  gap: 0.625rem;
+  padding: 0.75rem 1rem 1rem;
+  border-top: 1px solid var(--grey-line);
+}
+
+.problem,
+.restart {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.625rem 0.875rem;
+  gap: 0.5rem 0.75rem;
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--red-strong);
   border-left-width: 4px;
   border-radius: var(--radius-field);
-  color: var(--red-strong);
   font-weight: 700;
 }
 
-.problem p {
+.problem {
+  color: var(--red-strong);
+}
+
+.problem p,
+.restart p {
   flex: 1;
   min-width: 12rem;
 }
@@ -475,7 +477,9 @@ label {
 
 textarea {
   width: 100%;
-  padding: 0.625rem 0.75rem;
+  min-height: 3.5rem;
+  max-height: 12rem;
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--field-line);
   border-radius: var(--radius-field);
   background: var(--paper);
@@ -484,8 +488,7 @@ textarea {
   resize: vertical;
 }
 
-textarea[readonly],
-.ask input[readonly] {
+textarea[readonly] {
   background: var(--soft);
 }
 
@@ -503,7 +506,8 @@ textarea[readonly],
 
 /* ---------- buttons ---------- */
 .send,
-.problem button {
+.problem button,
+.restart button {
   min-height: 2.75rem;
   padding: 0 1.5rem;
   border: 1px solid var(--red-strong);
@@ -519,7 +523,7 @@ textarea[readonly],
 
 .send:hover:not(:disabled),
 .problem button:hover:not(:disabled),
-.ask-button:hover:not(:disabled) {
+.restart button:hover {
   background: #a3141d;
   border-color: #a3141d;
 }
@@ -554,118 +558,20 @@ button:disabled {
   outline-offset: 2px;
 }
 
-.chat-head :focus-visible,
-.site-footer :focus-visible {
+.chat-head :focus-visible {
   outline-color: #8ab4ff;
 }
 
-/* ---------- side column ---------- */
-.side {
-  display: grid;
-  gap: 1.5rem;
-}
-
-.side-title {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
-  font-family: var(--font-display);
-  font-size: 1.75rem;
-  font-weight: 400;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-}
-
-/* Red rule after the title: the reference's section-title device. */
-.side-title::after {
-  content: '';
-  flex: 1;
-  height: 2px;
-  background: var(--red);
-}
-
-.questions {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.questions button {
-  width: 100%;
-  min-height: 2.75rem;
-  padding: 0.5rem 2rem 0.5rem 0.875rem;
-  border: 1px solid var(--grey-line);
-  border-radius: var(--radius-field);
-  background: var(--white) no-repeat right 0.75rem center / 0.5rem
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 14'%3E%3Cpath d='m1 1 6 6-6 6' fill='none' stroke='%23c41a24' stroke-width='2'/%3E%3C/svg%3E");
-  text-align: left;
-  font-size: 1rem;
-  cursor: pointer;
-}
-
-.questions button:hover:not(:disabled) {
-  border-color: var(--red);
-  color: var(--red-strong);
-}
-
-.side-note,
-.about li {
-  color: var(--grey-text);
-  font-size: 0.9375rem;
-}
-
-.side-note {
-  margin-top: 0.75rem;
-}
-
-.about ul {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.about li {
-  padding-left: 1rem;
-  border-left: 3px solid var(--red);
+.log:focus-visible {
+  outline-offset: -3px;
 }
 
 /* ---------- footer ---------- */
 .site-footer {
   background: var(--footer);
-  color: var(--white);
-}
-
-.footer-row {
-  display: flex;
-  align-items: center;
-  gap: 2rem;
-  padding-top: 2rem;
-  padding-bottom: 2rem;
-  color: #cfcfcf;
-  font-size: 0.9375rem;
-}
-
-.footer-row p:last-child {
-  max-width: 46rem;
-}
-
-.footer-logo {
-  flex: none;
-  color: var(--white);
-  font-family: var(--font-display);
-  font-size: 1.75rem;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.footer-logo span {
-  color: #ff5a63; /* ours: red that keeps 6.5:1 on the dark footer */
-}
-
-.footer-bottom {
-  background: var(--black);
   color: #cfcfcf;
   font-size: 0.875rem;
-  line-height: 2.5rem;
+  line-height: 2.75rem;
 }
 
 .visually-hidden {
@@ -679,32 +585,37 @@ button:disabled {
 
 /* ---------- responsive (reference: Foundation 40em / 64em) ---------- */
 @media (max-width: 63.99em) {
-  .layout {
-    grid-template-columns: minmax(0, 1fr);
+  :root {
+    --chat-offset: 15rem; /* the shortcuts take their own row */
   }
 
-  .side {
-    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  .masthead-row {
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+  }
+
+  .categories {
+    flex-basis: 100%;
+  }
+
+  .categories ul {
+    justify-content: flex-start;
   }
 }
 
 @media (max-width: 39.99em) {
   :root {
     --gutter: 0.75rem; /* observed mobile search inset: 10px */
+    --chat-offset: 1rem; /* the panel fills the screen once scrolled to */
   }
 
-  .demo-strip {
-    padding: 0.375rem 0;
+  .top-strip {
     font-size: 0.8125rem;
-    line-height: 1.3;
-    white-space: normal;
   }
 
   .masthead-row {
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    padding-top: 0.75rem;
-    padding-bottom: 0.75rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.25rem;
   }
 
   .logo {
@@ -722,28 +633,19 @@ button:disabled {
     font-size: 1.125rem;
   }
 
-  .ask {
-    flex-basis: 100%;
-    max-width: none;
-  }
-
   .category {
     font-size: 1.125rem;
-    padding: 0.5rem 0.75rem;
+    padding: 0.5rem 0.625rem;
   }
 
   .topics ul {
-    grid-template-columns: 1fr;
-    gap: 0.25rem;
+    flex-direction: column;
+    gap: 0.125rem;
     padding-top: 0.5rem;
     padding-bottom: 0.5rem;
   }
 
   .topics li {
-    font-size: 0.875rem;
-  }
-
-  .topics strong {
     font-size: 1.0625rem;
   }
 
@@ -753,64 +655,105 @@ button:disabled {
   }
 
   .layout {
-    padding-top: 1rem;
-    gap: 1.5rem;
+    padding-top: 0.75rem;
   }
 
   .chat {
-    height: auto;
-    max-height: none;
     border-radius: var(--radius-field);
   }
 
-  .chat > :not(.chat-head) {
-    margin-left: 0.75rem;
-    margin-right: 0.75rem;
-  }
-
   .chat-head {
-    padding: 0.625rem 0.75rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: calc(var(--radius-field) - 1px) calc(var(--radius-field) - 1px) 0 0;
   }
 
   .chat-head h2 {
     font-size: 1.5rem;
   }
 
-  .chat-head p {
-    font-size: 0.8125rem;
-  }
-
   .new-conversation {
-    min-height: 2.75rem;
     padding: 0 0.75rem;
     font-size: 0.875rem;
   }
 
-  .log {
-    min-height: 16rem;
-    max-height: 65dvh;
+  .simulated-note {
+    margin: 0.5rem 0.75rem 0;
+    font-size: 0.875rem;
   }
 
-  .empty {
-    padding: 1rem;
+  .log {
+    padding-left: 0.75rem;
+    padding-right: 0.5rem;
+  }
+
+  .controls {
+    padding: 0.625rem 0.75rem 0.75rem;
   }
 
   .empty-title {
-    font-size: 1.625rem;
+    font-size: 1.875rem;
   }
 
   .message {
     max-width: 94%;
   }
+}
 
-  .footer-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.75rem;
+/* Short windows (or 200% zoom): smaller fixed parts so the controls and some history still fit. */
+@media (max-height: 40rem) {
+  .chat-head {
+    min-height: 3rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
   }
 
-  .footer-bottom {
-    line-height: 1.4;
-    padding: 0.625rem 0;
+  .chat-head h2 {
+    font-size: 1.375rem;
+  }
+
+  .log {
+    min-height: 4.5rem;
+  }
+
+  .empty {
+    padding: 0.5rem;
+  }
+
+  .empty-title {
+    font-size: 1.5rem;
+  }
+
+  /* Send button beside the box; the keyboard hint stays as the box's accessible description. */
+  .composer {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .composer label {
+    grid-column: 1 / -1;
+  }
+
+  .composer-row {
+    display: contents;
+  }
+
+  .hint {
+    display: none;
+  }
+
+  textarea {
+    height: 3.25rem;
+    min-height: 2.75rem;
+  }
+
+  .controls {
+    gap: 0.375rem;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+  }
+
+  .problem {
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
   }
 }

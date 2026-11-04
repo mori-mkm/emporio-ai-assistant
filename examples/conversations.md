@@ -1,26 +1,33 @@
-# Example conversations (observed, development set)
+# Example conversations
 
-- Source run: `20261103T031931Z-939445` (2026-11-03T03:19:31+00:00), real paid API calls
-- Model: anthropic / claude-haiku-5-5, config `d9f674fcc08d`, policy context `full`, prompt cache `system-5m`
-- Code: commit `b600d20de03f`, data generation 20261101T125243264432Z-10abfa
-- Messages are the development scenarios' synthetic customer turns; replies are copied unchanged from the report. Not graded here; no expected answers included.
-- Language: as executed (Portuguese by default); nothing is translated.
-- Selection: five passing conversations from the final configuration's development repeat, chosen to cover catalog search, price/stock/installments across turns, a return under policy conditions, the manual's conflicting installment rules, and actions the assistant cannot perform. The two scenarios that failed in this run (DEV-016, DEV-030) are documented in docs/evaluation.md.
+Five conversations from two sources, kept apart below. Customer messages and assistant replies are in Portuguese as they happened; nothing is translated, corrected or completed. Replies are reproduced as Markdown (list markers and the "Fontes do manual" heading as shown in the interface).
 
-## DEV-001: Beginner acoustic guitar up to R$ 1.000
+1. **Manual browser session:** one continuous session in the final interface, with eight customer turns.
+2. **Development run `20261103T031931Z-939445`:** DEV-020, DEV-013, DEV-011 and DEV-025, exported by the runner.
 
-**Customer:** Oi! Quais opções de violões vocês têm disponíveis custando até R$1000?
+## Manual browser session: catalog, store information, price and returns
+
+- Source: transcript of a real (live) conversation in the browser interface, provided by Matheus (the owner).
+- One session: all eight customer turns ran in the same conversation, in this order. The four screenshots show parts of this same session, grouped by topic; they are not separate sessions.
+- Date, time, commit, configuration and run identifiers: not recorded for this session (not informed).
+- Not graded here; no expected answers included.
+
+### Part 1: catalog and recommendation
+
+![Chat page in live mode: the customer asks for acoustic guitars up to R$1000 and the assistant lists 12 models with prices](screenshots/01-catalog.png)
+
+**Customer:** Quais opções de violões disponíveis custando até R$1000?
 
 **Assistant:**
 
-> Temos 12 violões disponíveis no catálogo até R$ 1.000,00 (os valores são de tabela, sem promoção ativa no momento):
+> Encontrei 12 violões disponíveis no catálogo até R$ 1.000,00 (preço de tabela):
 >
 > - Tagima Memphis AC-39 Nylon Natural: R$ 429,90
 > - Rozini RC-104 Nylon Estudante: R$ 459,90
 > - Shelby SN-100 Folk Aço Preto: R$ 549,00
 > - Giannini GF-1R Aço Folk Sunburst: R$ 579,90
 > - Yamaha C40 Nylon Natural: R$ 599,90
-> - Giannini GN-15 Nylon Cedr Natural: R$ 689,00
+> - Giannini GN-15 Nylon Cedro Natural: R$ 689,00
 > - Yamaha F310 Aço Natural: R$ 699,90
 > - Tagima Dallas Tuner Aço Natural: R$ 749,00
 > - Shelby SGD-195E Elétrico Aço Sunburst: R$ 799,00
@@ -28,21 +35,117 @@
 > - Tagima Woodstock Dreadnought Natural: R$ 899,00
 > - Tagima TW-7 7 Cordas Aço Natural: R$ 999,00
 >
-> Os modelos de nylon são geralmente indicados para quem está começando, e os de aço têm som mais brilhante. Se quiser, posso comparar alguns modelos ou verificar a melhor forma de pagamento para o que te interessar. Você prefere nylon ou aço?
+> Também há o ukulele Kala KA-B Barítono (R$ 599,00), que não incluí por ser ukulele e não violão.
+>
+> A disponibilidade é a do cadastro do catálogo, não um controle de estoque em tempo real. Se quiser, posso verificar o preço no PIX ou no cartão de um modelo específico. Você prefere violão de nylon ou de aço?
 
-**Customer:** É pra minha filha de 10 anos que está começando. Qual você indicaria?
+**Customer:** É para um iniciante. Quais dessas opções você recomenda?
 
 **Assistant:**
 
-> Para uma iniciante, eu começaria pelos modelos de nylon, que costumam ser mais confortáveis para os dedos. As três opções abaixo estão disponíveis no catálogo:
+> Para quem está começando, eu olharia primeiro estes três, que o catálogo marca como disponíveis:
 >
-> - Tagima Memphis AC-39 Nylon Natural: R$ 429,90. A descrição diz que é perfeito para quem está começando e tem corpo leve e confortável para sessões longas de estudo.
-> - Rozini RC-104 Nylon Estudante: R$ 459,90. Tampo em Spruce e fundo/laterais em Sapele, com preço acessível para iniciantes.
-> - Yamaha C40 Nylon Natural: R$ 599,90. Tampo em Spruce e fundo/laterais em Meranti, indicado na descrição para estudantes e iniciantes, com boa projeção sonora.
+> - Rozini RC-104 Nylon Estudante: R$ 459,90. É o mais barato e o único cujo nome indica uso de estudante.
+> - Yamaha C40 Nylon Natural: R$ 599,90. Violão de nylon, cujas cordas costumam ser mais macias nos dedos no começo.
+> - Yamaha F310 Aço Natural: R$ 699,90. Violão de aço, com som mais brilhante, mas as cordas são mais duras para iniciantes.
 >
-> As fichas não informam o tamanho ideal para uma criança de 10 anos, então vale experimentar o violão na loja antes de decidir. Os dados são do catálogo, não do estoque em tempo real.
+> O catálogo não traz o nível de cada modelo em detalhes, então essa indicação se baseia no nome e no tipo de corda. Se quiser, posso verificar o preço no PIX ou no cartão de algum deles. Você pretende tocar mais música clássica/bossa nova ou pop/rock?
+
+### Part 2: store address and opening hours
+
+![Chat page in live mode: the assistant gives the store address and the opening hours, each with its manual source](screenshots/02-store-information.png)
+
+**Customer:** Qual o endereço da loja?
+
+**Assistant:**
+
+> A loja fica na Rua 14 de Maio, 3200, Centro, Campo Grande, MS, CEP 79202-333.
 >
-> Ela já tem algum violão ou você prefere que eu compare só esses modelos?
+> **Fontes do manual**
+>
+> - §1.2 Dados da Empresa · p. 2
+
+**Customer:** E qual é o horário de funcionamento?
+
+**Assistant:**
+
+> A loja atende presencialmente de segunda a sexta, das 09:00 às 18:00, e aos sábados, das 09:00 às 13:00. Domingos e feriados está fechada.
+>
+> O atendimento pelo WhatsApp segue o mesmo horário, com respostas automáticas fora do expediente. Em datas especiais, como Black Friday, aniversário da loja e Natal, o horário pode ser estendido.
+>
+> **Fontes do manual**
+>
+> - §2 Horário de Funcionamento · p. 2
+
+### Part 3: product price and installments
+
+![Chat page in live mode: the assistant gives the Takamine GD20 price and the 12-installment value](screenshots/03-price-installments.png)
+
+**Customer:** Quanto custa o Takamine GD20?
+
+**Assistant:**
+
+> O Takamine GD20 Dreadnought Natural custa R$ 2.199,00 (preço de tabela). Ele consta como disponível no catálogo, que não é um controle de estoque em tempo real.
+>
+> Se quiser, posso verificar o valor no PIX ou no cartão.
+
+**Customer:** E em 12x sem juros, quanto fica cada parcela?
+
+**Assistant:**
+
+> Em 12x sem juros, cada parcela fica em R$ 183,25, totalizando R$ 2.199,00 (preço de tabela). O parcelamento atende à regra de parcela mínima da loja.
+>
+> Para pagamento no PIX, o valor à vista seria o preço de tabela com 5% de desconto, que posso consultar se quiser.
+>
+> **Fontes do manual**
+>
+> - §3 Formas de Pagamento · p. 3
+> - §3.1 Regras de Parcelamento · p. 3
+
+### Part 4: returns policy
+
+![Chat page in live mode: the customer gives the purchase details and the assistant confirms the online return window, with the manual source](screenshots/04-returns.png)
+
+**Customer:** Me arrependi da minha compra, posso devolver meu pedido?
+
+**Assistant:**
+
+> Se a compra foi online, você pode pedir a devolução em até 7 dias corridos após o recebimento, sem precisar justificar. Para isso, o produto deve estar na embalagem original, sem sinais de uso, com todos os acessórios e manuais. O reembolso sai na mesma forma de pagamento original em até 10 dias úteis, e o frete de devolução fica por conta da loja.
+>
+> O manual trata do direito de arrependimento só para compras online. Se a compra foi presencial, ele não define essa regra, então é melhor confirmar com a loja.
+>
+> Você comprou pelo site ou presencialmente, e quando recebeu o produto?
+>
+> Para dar andamento, você pode falar com a loja pelo WhatsApp (67) 3321-4500 ou pelo telefone (67) 3341-4444. O manual apresenta números diferentes em duas seções, e também traz duas grafias de e-mail: contato@emporiodamusica.com.br e contato@empóriodamusica.com.br. Não consigo acessar pedidos nem registrar a devolução por aqui.
+>
+> **Fontes do manual**
+>
+> - §4.1 Direito de Arrependimento (Compras Online) · p. 4
+
+**Customer:** Comprei pelo site e recebi há cinco dias. Está sem uso e tenho a embalagem original.
+
+**Assistant:**
+
+> Pelo que você descreveu, o pedido está dentro do prazo de arrependimento para compras online: 7 dias corridos após o recebimento. Você recebeu há cinco dias, então ainda há prazo.
+>
+> Antes de pedir a devolução, confirme se o produto está com todos os acessórios e manuais que vieram na compra. O manual exige essa condição.
+>
+> Para dar andamento, fale com a loja pelo WhatsApp (67) 3321-4500 ou pelo telefone (67) 3341-4444, ou escreva para contato@emporiodamusica.com.br ou contato@empóriodamusica.com.br. O manual traz números e grafias de e-mail diferentes em seções distintas. Não consigo registrar a devolução por aqui, e a aprovação depende da análise da loja.
+>
+> **Fontes do manual**
+>
+> - §4.1 Direito de Arrependimento (Compras Online) · p. 4
+
+## Development run examples (DEV-020, DEV-013, DEV-011, DEV-025)
+
+These metadata apply only to the four conversations below, not to the manual session above.
+
+- Source run: `20261103T031931Z-939445` (2026-11-03T03:19:31+00:00), real paid API calls
+- Model: anthropic / claude-haiku-5-5, config `d9f674fcc08d`, policy context `full`, prompt cache `system-5m`
+- Code: commit `b600d20de03f`, data generation 20261101T125243264432Z-10abfa
+- Messages are the development scenarios' synthetic customer turns; replies are copied unchanged from the report. Not graded here; no expected answers included.
+- Language: as executed (Portuguese by default); nothing is translated.
+- Selection: four passing conversations from the final configuration's development repeat, covering price/stock/installments across turns, a return under policy conditions, the manual's conflicting installment rules, and actions the assistant cannot perform. The run's catalog example (DEV-001) was replaced in this file by the manual session above. The two scenarios that failed in this run (DEV-016, DEV-030) are documented in docs/evaluation.md.
 
 ## DEV-020: 'Esse' and installments for a named product
 

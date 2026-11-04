@@ -8,10 +8,11 @@ type Message = {
   sources?: Source[]
   simulated?: boolean
 }
-// Where a question was typed or picked. Every origin uses the same send path and the same session.
-type Origin = 'composer' | 'search' | 'shortcut'
+// Where a question came from. Both use the same send path and the same session.
+type Origin = 'composer' | 'shortcut'
 type Problem = {
   message: string
+  code?: string
   action: 'retry' | 'restart' | 'start'
   retry?: { text: string; origin: Origin }
 }
@@ -24,6 +25,8 @@ const RESTART_CODES = new Set([
   'conversation_limit',
   'conversation_too_long',
 ])
+// The subset that means the conversation is full (as opposed to lost or outdated).
+const LIMIT_CODES = new Set(['conversation_limit', 'conversation_too_long'])
 const MAX_CHARS = 2000
 
 // Only categories that have products in the challenge catalog (Guitarras 5, Baixos 4, Violões 35,
@@ -36,22 +39,12 @@ const CATEGORIES = [
   { label: 'Teclados e Pianos', question: 'Quais teclados e pianos vocês têm disponíveis?' },
   { label: 'Baterias e Percussão', question: 'Quais baterias e itens de percussão vocês têm disponíveis?' },
 ]
-// Topics covered by the store manual (payment §3, exchanges §4, delivery §5, warranty §8, hours §2).
-const QUESTIONS = [
-  'Como funciona o desconto no PIX?',
-  'Posso parcelar no cartão?',
-  'Como faço para trocar um produto?',
-  'Qual o prazo de entrega para outras cidades?',
-  'Como funciona a garantia?',
-  'Qual o horário de funcionamento da loja?',
-]
 
 export default function App() {
   const [ready, setReady] = useState(false)
   const [simulated, setSimulated] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
-  const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<Problem | null>(null)
   const [announcement, setAnnouncement] = useState('')
@@ -61,11 +54,12 @@ export default function App() {
   const retry = useRef<{ text: string; origin: Origin; requestId: string } | null>(null)
   const nextId = useRef(0)
   const input = useRef<HTMLTextAreaElement>(null)
-  const search = useRef<HTMLInputElement>(null)
-  const logEnd = useRef<HTMLDivElement>(null)
+  const restartButton = useRef<HTMLButtonElement>(null)
+  const chat = useRef<HTMLElement>(null)
+  const log = useRef<HTMLDivElement>(null)
 
-  // `keepTyped`: a restart forced by an error (e.g. the session was lost) keeps what the customer
-  // typed; the "Nova conversa" button is an explicit reset and clears everything.
+  // `keepTyped`: a restart forced by an error keeps what the customer typed;
+  // the "Nova conversa" button is an explicit reset and clears everything.
   function begin(keepTyped = false) {
     epoch.current++
     sending.current = false
@@ -73,17 +67,14 @@ export default function App() {
     setReady(false)
     setBusy(false)
     setMessages([])
-    if (!keepTyped) {
-      setDraft('')
-      setQuery('')
-    }
+    if (!keepTyped) setDraft('')
     setProblem(null)
     setAnnouncement('Iniciando conversa…')
     void connect(epoch.current, true)
   }
 
   // Async only: state updates happen after the request, never synchronously in the mount effect.
-  // `focus`: only after an explicit "Nova conversa"; the first load does not move the page or open a keyboard.
+  // `focus`: only after a restart; the first load does not move the page or open a keyboard.
   async function connect(current: number, focus = false) {
     try {
       const info = await startSession()
@@ -106,14 +97,24 @@ export default function App() {
     void connect(epoch.current)
   }, [])
 
-  // Follow the conversation, but never move the page on the first, empty screen.
+  // Follow the conversation inside the history only, and bring the whole panel into view once
+  // there is something to read or an alert to act on. The first, empty screen never moves.
   useEffect(() => {
-    if (messages.length > 0 || busy) logEnd.current?.scrollIntoView?.({ block: 'nearest' })
-  }, [messages, busy])
+    if (messages.length === 0 && !busy && !problem) return
+    const box = log.current
+    if (box) box.scrollTop = box.scrollHeight
+    chat.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [messages, busy, problem])
+
+  const needsRestart = problem?.action === 'restart'
+  // The composer is replaced by the restart area; keep keyboard users on the only action left.
+  useEffect(() => {
+    if (needsRestart) restartButton.current?.focus({ preventScroll: true })
+  }, [needsRestart])
 
   async function send(raw: string, origin: Origin) {
     const text = raw.trim()
-    if (!ready || sending.current || !text) return
+    if (!ready || sending.current || needsRestart || !text) return
     sending.current = true
     const current = epoch.current
     const previous = retry.current
@@ -127,12 +128,12 @@ export default function App() {
     setBusy(true)
     setProblem(null)
     setAnnouncement('Enviando mensagem. O assistente está respondendo…')
+    let restart = false
     try {
       const reply = await sendMessage(text, requestId)
       if (current !== epoch.current) return
       retry.current = null
       if (origin === 'composer') setDraft('')
-      if (origin === 'search') setQuery('')
       setMessages((m) => [
         ...m,
         {
@@ -146,14 +147,16 @@ export default function App() {
       setAnnouncement('')
     } catch (error) {
       if (current !== epoch.current) return
-      // Typed text stays where it was typed; drop the unsent bubble so the log shows only delivered turns.
+      // Typed text stays in the box; drop the unsent bubble so the log shows only delivered turns.
       setMessages((m) => m.filter((msg) => msg.id !== pendingId))
       const network = error instanceof ApiError && error.network
       if (!network) retry.current = null
-      const restart = error instanceof ApiError && RESTART_CODES.has(error.code)
+      const code = error instanceof ApiError ? error.code : undefined
+      restart = code !== undefined && RESTART_CODES.has(code)
       setAnnouncement('')
       setProblem({
         message: messageOf(error),
+        code,
         action: restart ? 'restart' : 'retry',
         retry: { text, origin },
       })
@@ -161,8 +164,7 @@ export default function App() {
       if (current === epoch.current) {
         sending.current = false
         setBusy(false)
-        if (origin === 'search') search.current?.focus({ preventScroll: true })
-        else input.current?.focus({ preventScroll: origin !== 'composer' })
+        if (!restart) input.current?.focus({ preventScroll: origin !== 'composer' })
       }
     }
   }
@@ -172,11 +174,6 @@ export default function App() {
     void send(draft, 'composer')
   }
 
-  function onAsk(event: FormEvent) {
-    event.preventDefault()
-    void send(query, 'search')
-  }
-
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault()
@@ -184,21 +181,23 @@ export default function App() {
     }
   }
 
-  // Retry resends what is in the box the question came from (it may have been edited).
-  const retryOrigin = problem?.retry?.origin
-  const retryText =
-    retryOrigin === 'composer' ? draft : retryOrigin === 'search' ? query : (problem?.retry?.text ?? '')
-  const canAsk = ready && !busy
+  // Retry resends the message box (it may have been edited) or the shortcut's question.
+  const retryText = problem?.retry?.origin === 'composer' ? draft : (problem?.retry?.text ?? '')
+  const canAsk = ready && !busy && !needsRestart
   const canSend = canAsk && draft.trim().length > 0
+  const limitReached = needsRestart && LIMIT_CODES.has(problem?.code ?? '')
 
   return (
     <div className="site">
       <a className="skip-link" href="#message">
         Ir para o campo de mensagem
       </a>
-      <p className="demo-strip">
-        <span className="container">Demo conceitual de atendimento com IA · não é um canal de vendas</span>
-      </p>
+      <div className="top-strip">
+        <p className="container top-strip-row">
+          <span>Empório da Música · Campo Grande/MS</span>
+          <span className="demo-tag">Demonstração</span>
+        </p>
+      </div>
 
       <header className="masthead">
         <div className="container masthead-row">
@@ -207,97 +206,70 @@ export default function App() {
             <span className="logo-tag">da Música</span>
             <span className="visually-hidden"> — atendimento virtual</span>
           </h1>
-          <form className="ask" onSubmit={onAsk} aria-label="Pergunta rápida">
-            <label htmlFor="ask" className="visually-hidden">
-              Pergunte ao assistente
-            </label>
-            <input
-              id="ask"
-              ref={search}
-              type="text"
-              value={query}
-              maxLength={MAX_CHARS}
-              readOnly={busy}
-              enterKeyHint="send"
-              autoComplete="off"
-              placeholder="Encontre um instrumento ou pergunte"
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <button type="submit" className="ask-button" disabled={!canAsk || !query.trim()}>
-              <SearchIcon />
-              <span className="visually-hidden">Perguntar</span>
-            </button>
-          </form>
+          <nav className="categories" aria-label="Perguntar por categoria">
+            <ul>
+              {CATEGORIES.map((c) => (
+                <li key={c.label}>
+                  <button
+                    type="button"
+                    className="category"
+                    disabled={!canAsk}
+                    aria-label={`Perguntar sobre ${c.label}`}
+                    onClick={() => void send(c.question, 'shortcut')}
+                  >
+                    {c.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </nav>
         </div>
-        <nav className="categories" aria-label="Perguntar por categoria">
-          <ul className="container">
-            {CATEGORIES.map((c) => (
-              <li key={c.label}>
-                <button
-                  type="button"
-                  className="category"
-                  disabled={!canAsk}
-                  aria-label={`Perguntar sobre ${c.label}`}
-                  onClick={() => void send(c.question, 'shortcut')}
-                >
-                  {c.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
       </header>
 
       <section className="topics" aria-label="Com o que o assistente ajuda">
         <ul className="container">
           <li>
             <TagIcon />
-            <span>
-              <strong>Instrumentos e preços</strong> do catálogo da loja
-            </span>
+            Instrumentos e preços
           </li>
           <li>
             <CardIcon />
-            <span>
-              <strong>Pagamento e parcelamento</strong> conforme o manual
-            </span>
+            Pagamento e parcelamento
           </li>
           <li>
             <BoxIcon />
-            <span>
-              <strong>Trocas, entregas e garantia</strong> com a seção citada
-            </span>
+            Trocas, entregas e garantia
           </li>
         </ul>
       </section>
 
       <div className="container layout">
-        <main className="chat" aria-labelledby="chat-title">
+        <main className="chat" ref={chat} aria-labelledby="chat-title">
           <div className="chat-head">
-            <div>
-              <h2 id="chat-title">Atendimento Empório</h2>
-              <p>Assistente virtual · respostas do catálogo e do manual da loja</p>
-            </div>
-            <button type="button" className="new-conversation" onClick={() => begin()}>
-              Nova conversa
-            </button>
+            <h2 id="chat-title">Atendimento Empório</h2>
+            {!needsRestart && (
+              <button type="button" className="new-conversation" onClick={() => begin()}>
+                Nova conversa
+              </button>
+            )}
           </div>
 
           {simulated && (
-            <p className="simulated-banner" role="note">
-              <strong>Modo simulado:</strong> as respostas vêm de um roteiro de teste. Nenhum modelo de
-              IA é chamado e elas não representam o atendimento real.
-            </p>
+            <details className="simulated-note">
+              <summary>Modo simulado · respostas de teste, sem chamada à IA.</summary>
+              <p>
+                As respostas vêm de um roteiro de teste do servidor. Nenhum modelo de IA é chamado e
+                elas não representam o atendimento real.
+              </p>
+            </details>
           )}
 
-          <div className="log" role="log" aria-live="polite" aria-label="Conversa">
+          <div className="log" ref={log} role="log" aria-live="polite" aria-label="Conversa" tabIndex={0}>
             {messages.length === 0 && ready && (
               <div className="empty">
-                <p className="empty-title">Olá! Como posso ajudar?</p>
-                <p>
-                  Pergunte sobre instrumentos, preços, estoque, formas de pagamento, trocas e entregas
-                  da Empório da Música. Escreva abaixo, use a busca no topo ou escolha uma categoria.
-                </p>
+                <p className="empty-title">Encontre seu próximo instrumento.</p>
+                <p>Tire dúvidas sobre produtos, preços, pagamentos e políticas da loja.</p>
+                <p className="empty-hint">Escreva sua pergunta abaixo ou escolha um instrumento no topo.</p>
               </div>
             )}
             {messages.map((m) => (
@@ -324,101 +296,71 @@ export default function App() {
                 O assistente está respondendo<span className="dots">…</span>
               </p>
             )}
-            <div ref={logEnd} />
           </div>
 
-          <p className="visually-hidden" role="status">
-            {announcement}
-          </p>
-
-          {problem && (
-            <div className="problem" role="alert">
-              <p>{problem.message}</p>
-              {problem.action === 'retry' && problem.retry ? (
-                <button
-                  type="button"
-                  onClick={() => void send(retryText, problem.retry!.origin)}
-                  disabled={!retryText.trim()}
-                >
-                  Tentar novamente
-                </button>
-              ) : (
-                <button type="button" onClick={() => begin(true)}>
-                  {problem.action === 'start' ? 'Tentar novamente' : 'Nova conversa'}
-                </button>
-              )}
-            </div>
-          )}
-
-          <form className="composer" onSubmit={onSubmit}>
-            <label htmlFor="message">Sua mensagem</label>
-            <textarea
-              id="message"
-              ref={input}
-              value={draft}
-              maxLength={MAX_CHARS}
-              rows={3}
-              readOnly={busy}
-              aria-describedby="message-hint"
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onKeyDown}
-            />
-            <div className="composer-row">
-              <span id="message-hint" className="hint">
-                Enter envia · Shift+Enter quebra linha
-              </span>
-              <button type="submit" className="send" disabled={!canSend}>
-                {busy ? 'Enviando…' : 'Enviar'}
-              </button>
-            </div>
-          </form>
-        </main>
-
-        <aside className="side">
-          <section aria-labelledby="faq-title">
-            <h2 id="faq-title" className="side-title">
-              Perguntas frequentes
-            </h2>
-            <ul className="questions">
-              {QUESTIONS.map((q) => (
-                <li key={q}>
-                  <button type="button" disabled={!canAsk} onClick={() => void send(q, 'shortcut')}>
-                    {q}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <p className="side-note">
-              Sugestões, categorias e a busca continuam a conversa atual. Para recomeçar, use “Nova
-              conversa”.
+          <div className="controls">
+            <p className="visually-hidden" role="status">
+              {announcement}
             </p>
-          </section>
-          <section aria-labelledby="about-title" className="about">
-            <h2 id="about-title" className="side-title">
-              Sobre esta demo
-            </h2>
-            <ul>
-              <li>Preços, estoque e promoções vêm de uma cópia do catálogo da Empório da Música.</li>
-              <li>Regras de pagamento, trocas, entregas e garantia vêm do manual da loja.</li>
-              <li>O assistente não faz compras, reservas, cancelamentos nem consulta pedidos.</li>
-            </ul>
-          </section>
-        </aside>
+
+            {needsRestart ? (
+              <div className="restart" role="alert">
+                <p>{limitReached ? 'Esta conversa chegou ao limite.' : problem?.message}</p>
+                <button type="button" ref={restartButton} onClick={() => begin(true)}>
+                  Iniciar nova conversa
+                </button>
+              </div>
+            ) : (
+              <>
+                {problem && (
+                  <div className="problem" role="alert">
+                    <p>{problem.message}</p>
+                    {problem.action === 'retry' && problem.retry ? (
+                      <button
+                        type="button"
+                        onClick={() => void send(retryText, problem.retry!.origin)}
+                        disabled={!retryText.trim()}
+                      >
+                        Tentar novamente
+                      </button>
+                    ) : (
+                      <button type="button" onClick={() => begin(true)}>
+                        Tentar novamente
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <form className="composer" onSubmit={onSubmit}>
+                  <label htmlFor="message">Sua mensagem</label>
+                  <textarea
+                    id="message"
+                    ref={input}
+                    value={draft}
+                    maxLength={MAX_CHARS}
+                    rows={3}
+                    readOnly={busy}
+                    aria-describedby="message-hint"
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={onKeyDown}
+                  />
+                  <div className="composer-row">
+                    <span id="message-hint" className="hint">
+                      Enter envia · Shift+Enter quebra linha
+                    </span>
+                    <button type="submit" className="send" disabled={!canSend}>
+                      {busy ? 'Enviando…' : 'Enviar'}
+                    </button>
+                  </div>
+                </form>
+              </>
+            )}
+          </div>
+        </main>
       </div>
 
       <footer className="site-footer">
-        <div className="container footer-row">
-          <p className="footer-logo">
-            Empório <span>da Música</span>
-          </p>
-          <p>
-            Demo conceitual de atendimento com IA para a Empório da Música. As respostas usam o
-            catálogo e o manual da loja; confirme valores e condições antes de comprar.
-          </p>
-        </div>
-        <p className="footer-bottom">
-          <span className="container">Projeto técnico de demonstração · não é um canal oficial de vendas</span>
-        </p>
+        <p className="container">Empório da Música · Instrumentos musicais</p>
       </footer>
     </div>
   )
@@ -429,14 +371,6 @@ function messageOf(error: unknown): string {
 }
 
 // Inline icons (decorative): no icon font or extra dependency.
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      <circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" strokeWidth="2.5" />
-      <path d="m15.5 15.5 5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-    </svg>
-  )
-}
 function TagIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
